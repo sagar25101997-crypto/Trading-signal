@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#060a0f">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
-<title>Trade Signals | Live Alerts & Analytics</title>
+<title>Trade Signals</title>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=IBM+Plex+Mono:wght@400;600&family=Exo+2:wght@300;400;600;700&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -175,8 +175,8 @@ body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradie
     <div class="live-dot" id="liveDot"></div>
     <span class="live-text" id="liveText">LIVE</span>
   </div>
-  <div class="sound-btn active" id="soundBtn">🔊</div>
-  <div class="settings-btn" id="settingsBtn">⚙️</div>
+  <div class="sound-btn active" id="soundBtn" onclick="toggleSound()">🔊</div>
+  <div class="settings-btn" onclick="goSettings()">⚙️</div>
 </div>
 
 <div class="refresh-bar">
@@ -184,19 +184,19 @@ body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradie
 </div>
 
 <div class="tabs" id="channelTabs">
-  <div class="tab active" id="tab0">
+  <div class="tab active" onclick="switchTab(0)" id="tab0">
     <span class="tab-name"><span class="live-pulse"></span>LIVE</span>
     <span class="tab-count" id="cnt0">—</span>
   </div>
-  <div class="tab" id="tab1">
+  <div class="tab" onclick="switchTab(1)" id="tab1">
     <span class="tab-name">DAILY</span>
     <span class="tab-count" id="cnt1">—</span>
   </div>
-  <div class="tab" id="tab2">
+  <div class="tab" onclick="switchTab(2)" id="tab2">
     <span class="tab-name">FVG</span>
     <span class="tab-count" id="cnt2">—</span>
   </div>
-  <div class="tab" id="tab3">
+  <div class="tab" onclick="switchTab(3)" id="tab3">
     <span class="tab-name">CRT</span>
     <span class="tab-count" id="cnt3">—</span>
   </div>
@@ -207,243 +207,11 @@ body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradie
   <div class="page" id="page1"></div>
   <div class="page" id="page2"></div>
   <div class="page" id="page3"></div>
-  <div class="page" id="page4"></div>
-  <div class="page" id="page5"></div>
-</div>
-
-<div class="bottom-nav">
-  <div class="nav-item active" id="navSignals"><div class="nav-icon">📡</div><div class="nav-label">Signals</div></div>
-  <div class="nav-item" id="navHistory"><div class="nav-icon">📋</div><div class="nav-label">History</div></div>
-  <div class="nav-item" id="navSettings"><div class="nav-icon">⚙️</div><div class="nav-label">Settings</div></div>
-</div>
-<div class="toast" id="toast"></div>
-
-<script>
-// ======================== CONFIGURATION =========================
-const PROXY_URL = 'https://trading-signal-2g17.onrender.com'; // ⚠️ REPLACE WITH YOUR ACTUAL RENDER BACKEND URL
-const CHANNELS = [
-  { name:'DAILY SIGNAL', chatId:'-1003823176395', short:'DAILY' },
-  { name:'FVG SIGNAL',   chatId:'-1003842429805', short:'FVG' },
-  { name:'CRT SIGNAL',   chatId:'-1003562279289', short:'CRT' },
-];
-const REFRESH_SEC = 30;
-
-let soundOn = true;
-let currentTab = 0;
-let currentNav = 'signals';
-let allSignals = [[], [], []];     // per channel parsed signals
-let rawMessages = [[], [], []];     // per channel non-signal raw messages
-let seenIds = new Set();
-let refreshTimer = null;
-let _uid = 0;
-
-// ======================== SOUND (web audio) ====================
-let audioCtx = null;
-function playBeep() {
-  if (!soundOn) return;
-  try {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.connect(gain);
-    gain.connect(audioCtx.destination);
-    osc.frequency.setValueAtTime(880, audioCtx.currentTime);
-    osc.frequency.setValueAtTime(660, audioCtx.currentTime + 0.1);
-    gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.4);
-    osc.start();
-    osc.stop(audioCtx.currentTime + 0.4);
-  } catch(e) { console.warn("audio error", e); }
-}
-
-function toggleSound() {
-  soundOn = !soundOn;
-  const btn = document.getElementById('soundBtn');
-  btn.textContent = soundOn ? '🔊' : '🔇';
-  btn.classList.toggle('active', soundOn);
-  const soundToggle = document.getElementById('soundToggle');
-  if (soundToggle) soundToggle.classList.toggle('on', soundOn);
-  showToast(soundOn ? 'SOUND ON' : 'SOUND OFF');
-}
-
-// ======================== UTILITIES ============================
-function timeAgo(unixSeconds) {
-  const diffMins = Math.floor((Date.now() - unixSeconds * 1000) / 60000);
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins} min ago`;
-  const hours = Math.floor(diffMins / 60);
-  if (hours < 24) return `${hours} hr ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
-function fmtTime(unixSeconds) {
-  return new Date(unixSeconds * 1000).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
-}
-
-function getWeekRange() {
-  const now = new Date();
-  const day = now.getDay();
-  const mon = new Date(now);
-  mon.setDate(now.getDate() - (day === 0 ? 6 : day - 1));
-  const sun = new Date(mon);
-  sun.setDate(mon.getDate() + 6);
-  const format = d => d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
-  return `${format(mon)} – ${format(sun)}`;
-}
-function getNextSunday() {
-  const now = new Date();
-  const daysUntilSun = (7 - now.getDay()) % 7 || 7;
-  const nextSun = new Date(now);
-  nextSun.setDate(now.getDate() + daysUntilSun);
-  return nextSun.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
-}
-
-// ======================== SIGNAL PARSING (advanced) ============
-function parseSignal(text) {
-  if (!text) return null;
-  const upper = text.toUpperCase();
-  let dir = null;
-  if (/\b(BUY|LONG)\b/.test(upper)) dir = 'buy';
-  else if (/\b(SELL|SHORT)\b/.test(upper)) dir = 'sell';
-  
-  let pair = null;
-  const pairMatch = text.match(/\b([A-Z]{3,4}[\/\.]?[A-Z]{3,4})\b/i) || text.match(/\b([A-Z]{6})\b/);
-  if (pairMatch) pair = pairMatch[1].toUpperCase().replace(/[\/\.]/g, '');
-  
-  const entryMatch = text.match(/(?:ENTRY|PRICE|@)\s*[:\-]?\s*([0-9]+\.?[0-9]*)/i);
-  const slMatch = text.match(/(?:SL|STOP[- ]?LOSS)\s*[:\-]?\s*([0-9]+\.?[0-9]*)/i);
-  const tpMatch = text.match(/(?:TP\s*[12]?|TAKE[- ]?PROFIT\s*[12]?)\s*[:\-]?\s*([0-9]+\.?[0-9]*)/i);
-  const entry = entryMatch ? entryMatch[1] : null;
-  const sl = slMatch ? slMatch[1] : null;
-  const tp = tpMatch ? tpMatch[1] : null;
-  
-  let rr = null;
-  if (entry && sl && tp) {
-    const e = parseFloat(entry), s = parseFloat(sl), t = parseFloat(tp);
-    const risk = Math.abs(e - s);
-    const reward = Math.abs(t - e);
-    if (risk > 0) rr = '1:' + (reward / risk).toFixed(1);
-  }
-  if (!dir && !pair) return null;
-  return { dir, pair, entry, sl, tp, rr };
-}
-
-// ======================== RENDER COMPONENTS ====================
-function renderCard(s, showChannel, histMode) {
-  const id = `c_${_uid++}`;
-  const emoji = s.dir === 'buy' ? '🟢' : '🔴';
-  const dirLabel = s.dir === 'buy' ? 'BUY' : 'SELL';
-  const newPill = s.isNew && !histMode ? '<span class="new-pill">NEW</span>' : '';
-  const chBadge = showChannel && s.ch ? `<span class="ch-badge">${s.ch}</span>` : '';
-  const outBadge = histMode ? '<span class="hit-badge open">OPEN</span>' : '';
-  const newCls = s.isNew && !histMode ? 'new-signal' : '';
-  return `<div class="sig-card ${s.dir || ''} ${newCls}" id="${id}" onclick="toggleCard('${id}')">
-    <div class="card-collapsed">
-      <div class="card-top">
-        <div class="card-dir-pair">
-          <span class="card-emoji">${emoji}</span>
-          <span class="card-dir ${s.dir}">${dirLabel}</span>
-          <span class="card-pair">${s.pair || '——'}</span>
-        </div>
-        <div class="card-right">${newPill}${chBadge}${outBadge}<span class="expand-arrow">▼</span></div>
-      </div>
-      <div class="card-price-grid">
-        <div class="cpg-cell"><div class="cpg-label">ENTRY</div><div class="cpg-val entry">${s.entry || '—'}</div></div>
-        <div class="cpg-cell"><div class="cpg-label">SL</div><div class="cpg-val sl">${s.sl || '—'}</div></div>
-        <div class="cpg-cell"><div class="cpg-label">TP</div><div class="cpg-val tp">${s.tp || '—'}</div></div>
-        <div class="cpg-cell"><div class="cpg-label">R:R</div><div class="cpg-val rr">${s.rr || '—'}</div></div>
-      </div>
-      <div class="card-time-row">
-        <span class="card-time-txt">🕐 <span class="rel-t" data-ts="${s.ts}">${timeAgo(s.ts)}</span> · ${fmtTime(s.ts)}</span>
-        <span class="card-tap-hint">TAP TO EXPAND</span>
-      </div>
-    </div>
-    <div class="card-expanded-body">
-      <div class="tg-body">
-        <div class="tg-row"><span class="tg-label">Entry</span><span class="tg-val entry">${s.entry || '—'}</span></div>
-        <div class="tg-row"><span class="tg-label">SL</span><span class="tg-val sl">${s.sl || '—'}</span></div>
-        <div class="tg-row"><span class="tg-label">TP</span><span class="tg-val tp">${s.tp || '—'}</span></div>
-        ${s.rr ? `<div class="tg-row"><span class="tg-label">R:R</span><span class="tg-val rr">${s.rr}</span></div>` : ''}
-      </div>
-      <div class="tg-footer">
-        <span class="tg-time">🕐 <span class="rel-t" data-ts="${s.ts}">${timeAgo(s.ts)}</span> · ${fmtTime(s.ts)}</span>
-        ${s.rr ? `<span class="rr-pill">R:R ${s.rr}</span>` : ''}
-      </div>
-    </div>
-  </div>`;
-}
-
-function statsRow(signalsArray) {
-  const buyCount = signalsArray.filter(s => s.dir === 'buy').length;
-  const sellCount = signalsArray.filter(s => s.dir === 'sell').length;
-  return `<div class="stats-row">
-    <div class="stat"><div class="stat-n">${signalsArray.length}</div><div class="stat-l">TOTAL</div></div>
-    <div class="stat"><div class="stat-n green">${buyCount}</div><div class="stat-l">BUY</div></div>
-    <div class="stat"><div class="stat-n red">${sellCount}</div><div class="stat-l">SELL</div></div>
-  </div>`;
-}
-
-function renderChannelPage(chIdx, signals, raws) {
-  const page = document.getElementById(`page${chIdx+1}`);
-  document.getElementById(`cnt${chIdx+1}`).textContent = signals.length || '0';
-  let html = statsRow(signals);
-  if (!signals.length && !raws.length) {
-    html += `<div class="empty-state"><div class="empty-icon">📡</div><div class="empty-text">NO SIGNALS YET</div></div>`;
-  } else {
-    signals.forEach(s => { html += renderCard(s, false, false); });
-    if (raws.length) {
-      html += `<div style="font-family:var(--mono);font-size:9px;color:var(--text3);letter-spacing:2px;margin:12px 0 8px;">// OTHER MESSAGES</div>`;
-      raws.forEach(r => {
-        html += `<div class="raw-card"><div class="raw-text">${r.text.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div><div class="raw-time">🕐 ${fmtTime(r.ts)}</div></div>`;
-      });
-    }
-  }
-  page.innerHTML = html;
-}
-
-function renderLivePage() {
-  const combined = [];
-  allSignals.forEach((sigs, ci) => {
-    sigs.forEach(s => combined.push({ ...s, ch: CHANNELS[ci].short }));
-  });
-  combined.sort((a,b) => {
-    if (a.isNew && !b.isNew) return -1;
-    if (!a.isNew && b.isNew) return 1;
-    return (b.ts || 0) - (a.ts || 0);
-  });
-  document.getElementById('cnt0').textContent = combined.length || '0';
-  let html = statsRow(combined);
-  if (!combined.length) html += `<div class="empty-state"><div class="empty-icon">📡</div><div class="empty-text">NO SIGNALS YET</div></div>`;
-  else combined.forEach(s => { html += renderCard(s, true, false); });
-  document.getElementById('page0').innerHTML = html;
-}
-
-function renderHistory() {
-  const combined = [];
-  allSignals.forEach((sigs, ci) => {
-    sigs.forEach(s => combined.push({ ...s, ch: CHANNELS[ci].short }));
-  });
-  combined.sort((a,b) => (b.ts || 0) - (a.ts || 0));
-  const winCount = 0, lossCount = 0; // future upgrade
-  const winPct = combined.length ? 0 : 0;
-  document.getElementById('page4').innerHTML = `
-    <div class="hist-stats-header">
-      <div class="hist-week-label">
-        <span>// WEEK: ${getWeekRange()}</span>
-        <span class="hist-reset-info">🔄 Resets ${getNextSunday()}</span>
-      </div>
-      <div class="hist-stats-grid">
-        <div class="hist-stat"><div class="hist-stat-n total">${combined.length}</div><div class="hist-stat-l">TOTAL</div></div>
-        <div class="hist-stat"><div class="hist-stat-n win">0</div><div class="hist-stat-l">WIN</div></div>
-        <div class="hist-stat"><div class="hist-stat-n loss">0</div><div class="hist-stat-l">LOSS</div></div>
-        <div class="hist-stat"><div class="hist-stat-n pct">0%</div><div class="hist-stat-l">WIN %</div></div>
-      </div>
-    </div>
-    ${combined.length ? combined.map(s => renderCard(s, true, true)).join('') : '<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">NO HISTORY</div></div>'}
-  `;
-}
-
-function renderSettingsPage() {
-  document.getElementById('page5').innerHTML = `
+  <div class="page" id="page4">
+    <div id="histStatsHdr"></div>
+    <div id="historyList"></div>
+  </div>
+  <div class="page" id="page5">
     <div class="settings-section">
       <div class="settings-title">// Channels</div>
       <div class="channel-card"><div class="channel-name">📡 DAILY SIGNAL</div><div class="channel-id">Chat: -1003823176395</div></div>
@@ -453,157 +221,323 @@ function renderSettingsPage() {
     <div class="settings-section">
       <div class="settings-title">// Preferences</div>
       <div class="setting-row">
-        <div><div class="setting-label">Sound Alert</div><div class="setting-sub">New signal beep</div></div>
-        <div class="toggle ${soundOn ? 'on' : ''}" id="soundToggle"></div>
+        <div><div class="setting-label">Sound Alert</div><div class="setting-sub">New signal pe beep</div></div>
+        <div class="toggle on" id="soundToggle" onclick="toggleSound()"></div>
       </div>
       <div class="setting-row">
-        <div><div class="setting-label">Auto Refresh</div><div class="setting-sub">Every ${REFRESH_SEC} seconds</div></div>
+        <div><div class="setting-label">Auto Refresh</div><div class="setting-sub">Har 30 second</div></div>
         <div class="toggle on"></div>
       </div>
     </div>
     <div class="settings-section">
       <div class="settings-title">// App Info</div>
       <div class="setting-row">
-        <div><div class="setting-label">Version</div><div class="setting-sub">TradeSignal v2.1</div></div>
-        <div style="font-family:var(--mono);font-size:10px;color:var(--text3)">v2.1</div>
+        <div><div class="setting-label">Version</div><div class="setting-sub">TradeSignal v2.0</div></div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--text3)">v2.0</div>
       </div>
     </div>
-  `;
-  const soundToggleElem = document.getElementById('soundToggle');
-  if (soundToggleElem) soundToggleElem.addEventListener('click', (e) => { e.stopPropagation(); toggleSound(); });
+  </div>
+</div>
+
+<div class="bottom-nav">
+  <div class="nav-item active" onclick="goSignals()" id="navSignals"><div class="nav-icon">📡</div><div class="nav-label">Signals</div></div>
+  <div class="nav-item" onclick="goHistory()" id="navHistory"><div class="nav-icon">📋</div><div class="nav-label">History</div></div>
+  <div class="nav-item" onclick="goSettings()" id="navSettings"><div class="nav-icon">⚙️</div><div class="nav-label">Settings</div></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const PROXY_URL = '';
+const CHANNELS = [
+  { name:'DAILY SIGNAL', chatId:'-1003823176395' },
+  { name:'FVG SIGNAL',   chatId:'-1003842429805' },
+  { name:'CRT SIGNAL',   chatId:'-1003562279289' },
+];
+const REFRESH_SEC = 30;
+const CH_LABELS   = ['DAILY','FVG','CRT'];
+
+let soundOn=true, currentTab=0, currentNav='signals';
+let allSignals=[[],[],[]], seenIds=new Set(), refreshTimer, _uid=0;
+
+// Sound
+const AudioCtx=window.AudioContext||window.webkitAudioContext;
+let audioCtx;
+function playBeep(){
+  if(!soundOn)return;
+  try{
+    if(!audioCtx)audioCtx=new AudioCtx();
+    const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+    o.connect(g);g.connect(audioCtx.destination);
+    o.frequency.setValueAtTime(880,audioCtx.currentTime);
+    o.frequency.setValueAtTime(660,audioCtx.currentTime+0.1);
+    g.gain.setValueAtTime(0.3,audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+0.4);
+    o.start();o.stop(audioCtx.currentTime+0.4);
+  }catch(e){}
+}
+function toggleSound(){
+  soundOn=!soundOn;
+  document.getElementById('soundBtn').textContent=soundOn?'🔊':'🔇';
+  document.getElementById('soundBtn').className='sound-btn'+(soundOn?' active':'');
+  const t=document.getElementById('soundToggle');
+  if(t)t.className='toggle'+(soundOn?' on':'');
+  showToast(soundOn?'SOUND ON':'SOUND OFF');
 }
 
-// ======================== FETCH PROXY ==========================
-async function fetchAll() {
-  const dot = document.getElementById('liveDot');
-  const txt = document.getElementById('liveText');
-  dot.style.background = 'var(--gold)';
-  dot.style.boxShadow = '0 0 6px var(--gold)';
-  txt.textContent = 'SYNC';
-  let newCount = 0;
-  const previousSeen = new Set(seenIds);
-  try {
-    const response = await fetch(`${PROXY_URL}/signals`);
-    const data = await response.json();
-    if (!data.ok) throw new Error('Proxy error');
-    data.channels.forEach((ch, idx) => {
-      if (idx >= CHANNELS.length) return;
-      const signals = [];
-      const raws = [];
-      (ch.messages || []).forEach(msgObj => {
-        const msg = msgObj.message || msgObj.channel_post;
-        if (!msg) return;
-        const text = msg.text || msg.caption || '';
-        const id = msg.message_id;
-        const ts = msg.date;
-        const parsed = parseSignal(text);
-        const isNew = !seenIds.has(id);
-        if (parsed) {
-          if (isNew) newCount++;
-          signals.push({ ...parsed, text, ts, id, isNew });
-        } else if (text.trim()) {
-          raws.push({ text, ts, id });
-        }
+// Parse
+function parseSignal(text){
+  if(!text)return null;
+  const t=text.toUpperCase();
+  let dir=null;
+  if(/\bBUY\b/.test(t))dir='buy';
+  else if(/\bSELL\b/.test(t))dir='sell';
+  const pm=text.match(/\b([A-Z]{3}[\/\.]?[A-Z]{3})\b/i)||text.match(/\b([A-Z]{6})\b/);
+  const pair=pm?pm[1].toUpperCase().replace('/','').replace('.',''):null;
+  const em=text.match(/(?:ENTRY|PRICE|@)\s*[:\-]?\s*([0-9]+\.?[0-9]*)/i);
+  const sm=text.match(/(?:SL|STOP[- ]?LOSS)\s*[:\-]?\s*([0-9]+\.?[0-9]*)/i);
+  const tm=text.match(/(?:TP\s*[12]?|TAKE[- ]?PROFIT\s*[12]?)\s*[:\-]?\s*([0-9]+\.?[0-9]*)/i);
+  const entry=em?em[1]:null,sl=sm?sm[1]:null,tp=tm?tm[1]:null;
+  if(!dir&&!pair)return null;
+  let rr=null;
+  if(entry&&sl&&tp){
+    const e=parseFloat(entry),s=parseFloat(sl),t2=parseFloat(tp);
+    const risk=Math.abs(e-s),reward=Math.abs(t2-e);
+    if(risk>0)rr='1:'+(reward/risk).toFixed(1);
+  }
+  return{dir,pair,entry,sl,tp,rr};
+}
+
+// Time
+function timeAgo(unix){
+  const m=Math.floor((Date.now()-unix*1000)/60000);
+  if(m<1)return'Just now';
+  if(m<60)return m+' min ago';
+  const h=Math.floor(m/60);
+  if(h<24)return h+' hr ago';
+  return Math.floor(h/24)+'d ago';
+}
+function fmtTime(unix){
+  return new Date(unix*1000).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
+}
+
+// Render card
+function renderCard(s,showCh,histMode){
+  const id='c'+(_uid++);
+  const emoji=s.dir==='buy'?'🟢':'🔴';
+  const dirL=s.dir==='buy'?'BUY':'SELL';
+  const newPill=s.isNew&&!histMode?'<span class="new-pill">NEW</span>':'';
+  const chBadge=showCh&&s.ch?`<span class="ch-badge">${s.ch}</span>`:'';
+  const outBadge=histMode?'<span class="hit-badge open">OPEN</span>':'';
+  const newCls=s.isNew&&!histMode?'new-signal':'';
+  return `<div class="sig-card ${s.dir||''} ${newCls}" id="${id}" onclick="toggleCard('${id}')">
+  <div class="card-collapsed">
+    <div class="card-top">
+      <div class="card-dir-pair">
+        <span class="card-emoji">${emoji}</span>
+        <span class="card-dir ${s.dir}">${dirL}</span>
+        <span class="card-pair">${s.pair||'——'}</span>
+      </div>
+      <div class="card-right">${newPill}${chBadge}${outBadge}<span class="expand-arrow">▼</span></div>
+    </div>
+    <div class="card-price-grid">
+      <div class="cpg-cell"><div class="cpg-label">ENTRY</div><div class="cpg-val entry">${s.entry||'—'}</div></div>
+      <div class="cpg-cell"><div class="cpg-label">SL</div><div class="cpg-val sl">${s.sl||'—'}</div></div>
+      <div class="cpg-cell"><div class="cpg-label">TP</div><div class="cpg-val tp">${s.tp||'—'}</div></div>
+      <div class="cpg-cell"><div class="cpg-label">R:R</div><div class="cpg-val rr">${s.rr||'—'}</div></div>
+    </div>
+    <div class="card-time-row">
+      <span class="card-time-txt">🕐 <span class="rel-t" data-ts="${s.ts}">${timeAgo(s.ts)}</span> · ${fmtTime(s.ts)}</span>
+      <span class="card-tap-hint">TAP TO EXPAND</span>
+    </div>
+  </div>
+  <div class="card-expanded-body">
+    <div class="tg-body">
+      <div class="tg-row"><span class="tg-label">Entry</span><span class="tg-val entry">${s.entry||'—'}</span></div>
+      <div class="tg-row"><span class="tg-label">SL</span><span class="tg-val sl">${s.sl||'—'}</span></div>
+      <div class="tg-row"><span class="tg-label">TP</span><span class="tg-val tp">${s.tp||'—'}</span></div>
+      ${s.rr?`<div class="tg-row"><span class="tg-label">R:R</span><span class="tg-val rr">${s.rr}</span></div>`:''}
+    </div>
+    <div class="tg-footer">
+      <span class="tg-time">🕐 <span class="rel-t" data-ts="${s.ts}">${timeAgo(s.ts)}</span> · ${fmtTime(s.ts)}</span>
+      ${s.rr?`<span class="rr-pill">R:R ${s.rr}</span>`:''}
+    </div>
+  </div>
+</div>`;
+}
+
+function toggleCard(id){
+  const el=document.getElementById(id);
+  if(el)el.classList.toggle('expanded');
+}
+
+function statsRow(sigs){
+  const b=sigs.filter(s=>s.dir==='buy').length;
+  const sl=sigs.filter(s=>s.dir==='sell').length;
+  return `<div class="stats-row">
+    <div class="stat"><div class="stat-n">${sigs.length}</div><div class="stat-l">TOTAL</div></div>
+    <div class="stat"><div class="stat-n green">${b}</div><div class="stat-l">BUY</div></div>
+    <div class="stat"><div class="stat-n red">${sl}</div><div class="stat-l">SELL</div></div>
+  </div>`;
+}
+
+function getWeekRange(){
+  const now=new Date(),day=now.getDay();
+  const mon=new Date(now);mon.setDate(now.getDate()-(day===0?6:day-1));
+  const sun=new Date(mon);sun.setDate(mon.getDate()+6);
+  const f=d=>d.toLocaleDateString('en-IN',{day:'2-digit',month:'short'});
+  return f(mon)+' – '+f(sun);
+}
+function getNextSunday(){
+  const now=new Date(),diff=(7-now.getDay())%7||7;
+  const n=new Date(now);n.setDate(now.getDate()+diff);
+  return n.toLocaleDateString('en-IN',{day:'2-digit',month:'short'});
+}
+
+function renderChannelPage(chIdx,signals,raws){
+  const page=document.getElementById('page'+(chIdx+1));
+  document.getElementById('cnt'+(chIdx+1)).textContent=signals.length||'0';
+  let html=statsRow(signals);
+  if(!signals.length&&!raws.length)
+    html+=`<div class="empty-state"><div class="empty-icon">📡</div><div class="empty-text">NO SIGNALS YET</div></div>`;
+  signals.forEach(s=>{html+=renderCard(s,false,false);});
+  if(raws.length){
+    html+=`<div style="font-family:var(--mono);font-size:9px;color:var(--text3);letter-spacing:2px;margin:12px 0 8px;">// OTHER MESSAGES</div>`;
+    raws.forEach(r=>{
+      html+=`<div class="raw-card"><div class="raw-text">${r.text.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div><div class="raw-time">🕐 ${fmtTime(r.ts)}</div></div>`;
+    });
+  }
+  page.innerHTML=html;
+}
+
+function renderLivePage(){
+  const all=[];
+  allSignals.forEach((sigs,ci)=>{sigs.forEach(s=>all.push({...s,ch:CH_LABELS[ci]}));});
+  all.sort((a,b)=>{
+    if(a.isNew&&!b.isNew)return -1;
+    if(!a.isNew&&b.isNew)return 1;
+    return(b.ts||0)-(a.ts||0);
+  });
+  document.getElementById('cnt0').textContent=all.length||'0';
+  let html=statsRow(all);
+  if(!all.length)html+=`<div class="empty-state"><div class="empty-icon">📡</div><div class="empty-text">NO SIGNALS YET</div></div>`;
+  else all.forEach(s=>{html+=renderCard(s,true,false);});
+  document.getElementById('page0').innerHTML=html;
+}
+
+function renderHistory(){
+  const all=[];
+  allSignals.forEach((sigs,ci)=>{sigs.forEach(s=>all.push({...s,ch:CH_LABELS[ci]}));});
+  all.sort((a,b)=>(b.ts||0)-(a.ts||0));
+  document.getElementById('histStatsHdr').innerHTML=`
+    <div class="hist-stats-header">
+      <div class="hist-week-label">
+        <span>// WEEK: ${getWeekRange()}</span>
+        <span class="hist-reset-info">🔄 Resets ${getNextSunday()}</span>
+      </div>
+      <div class="hist-stats-grid">
+        <div class="hist-stat"><div class="hist-stat-n total">${all.length}</div><div class="hist-stat-l">TOTAL</div></div>
+        <div class="hist-stat"><div class="hist-stat-n win">0</div><div class="hist-stat-l">WIN</div></div>
+        <div class="hist-stat"><div class="hist-stat-n loss">0</div><div class="hist-stat-l">LOSS</div></div>
+        <div class="hist-stat"><div class="hist-stat-n pct">0%</div><div class="hist-stat-l">WIN %</div></div>
+      </div>
+    </div>`;
+  if(!all.length){
+    document.getElementById('historyList').innerHTML=`<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">NO HISTORY</div></div>`;
+    return;
+  }
+  document.getElementById('historyList').innerHTML=all.map(s=>renderCard(s,true,true)).join('');
+}
+
+// Fetch
+async function fetchAll(){
+  const dot=document.getElementById('liveDot'),txt=document.getElementById('liveText');
+  dot.style.background='var(--gold)';dot.style.boxShadow='0 0 6px var(--gold)';
+  txt.textContent='SYNC';
+  let newCount=0;
+  const prevIds=new Set(seenIds);
+  try{
+    const res=await fetch(PROXY_URL+'/signals');
+    const data=await res.json();
+    if(!data.ok)throw new Error('Proxy error');
+    data.channels.forEach((ch,i)=>{
+      const signals=[],raws=[];
+      (ch.messages||[]).forEach(m=>{
+        const msg=m.message||m.channel_post;
+        if(!msg)return;
+        const text=msg.text||msg.caption||'';
+        const id=msg.message_id,ts=msg.date;
+        const parsed=parseSignal(text);
+        const isNew=!seenIds.has(id);
+        if(parsed){if(isNew)newCount++;signals.push({...parsed,text,ts,id,isNew});}
+        else if(text.trim())raws.push({text,ts,id});
         seenIds.add(id);
       });
-      allSignals[idx] = signals;
-      rawMessages[idx] = raws;
-      renderChannelPage(idx, signals, raws);
+      allSignals[i]=signals;
+      renderChannelPage(i,signals,raws);
     });
     renderLivePage();
-    if (newCount > 0) {
-      playBeep();
-      showToast(`${newCount} NEW SIGNAL${newCount > 1 ? 'S' : ''}`);
-    }
+    if(newCount>0){playBeep();showToast(newCount+' NEW SIGNAL'+(newCount>1?'S':''));}
     renderHistory();
-    dot.style.background = 'var(--green)';
-    dot.style.boxShadow = '0 0 6px var(--green)';
-    txt.textContent = 'LIVE';
-  } catch (err) {
-    console.error(err);
-    dot.style.background = 'var(--red)';
-    dot.style.boxShadow = '0 0 6px var(--red)';
-    txt.textContent = 'ERR';
-    showToast('CONNECTION ERROR');
+    dot.style.background='var(--green)';dot.style.boxShadow='0 0 6px var(--green)';
+    txt.textContent='LIVE';
+  }catch(e){
+    console.error(e);
+    dot.style.background='var(--red)';dot.style.boxShadow='0 0 6px var(--red)';
+    txt.textContent='ERR';showToast('CONNECTION ERROR');
   }
-  const bar = document.getElementById('refreshBar');
-  bar.style.animation = 'none';
-  bar.offsetHeight;
-  bar.style.animation = '';
+  const bar=document.getElementById('refreshBar');
+  bar.style.animation='none';bar.offsetHeight;bar.style.animation='';
 }
 
-// ======================== NAVIGATION & UI =======================
-function switchTab(tabIdx) {
-  currentTab = tabIdx;
-  document.querySelectorAll('.tab').forEach((t, i) => {
-    t.classList.toggle('active', i === tabIdx);
-  });
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.getElementById(`page${tabIdx}`).classList.add('active');
+// Nav
+function switchTab(i){
+  currentTab=i;
+  document.querySelectorAll('.tab').forEach((t,j)=>t.className='tab'+(j===i?' active':''));
+  document.querySelectorAll('.page').forEach(p=>p.className='page');
+  document.getElementById('page'+i).className='page active';
 }
-
-function goSignals() {
-  currentNav = 'signals';
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+function goSignals(){
+  currentNav='signals';
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('navSignals').classList.add('active');
-  document.getElementById('channelTabs').style.display = 'flex';
+  document.getElementById('channelTabs').style.display='flex';
   switchTab(currentTab);
 }
-function goHistory() {
-  currentNav = 'history';
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+function goHistory(){
+  currentNav='history';
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('navHistory').classList.add('active');
-  document.getElementById('channelTabs').style.display = 'none';
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.getElementById('page4').classList.add('active');
+  document.getElementById('channelTabs').style.display='none';
+  document.querySelectorAll('.page').forEach(p=>p.className='page');
+  document.getElementById('page4').className='page active';
   renderHistory();
 }
-function goSettings() {
-  currentNav = 'settings';
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+function goSettings(){
+  currentNav='settings';
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('navSettings').classList.add('active');
-  document.getElementById('channelTabs').style.display = 'none';
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.getElementById('page5').classList.add('active');
-  renderSettingsPage();
+  document.getElementById('channelTabs').style.display='none';
+  document.querySelectorAll('.page').forEach(p=>p.className='page');
+  document.getElementById('page5').className='page active';
 }
-function showToast(msg) {
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 2500);
+function showToast(msg){
+  const t=document.getElementById('toast');
+  t.textContent=msg;t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),2500);
 }
 
-window.toggleCard = function(id) {
-  const el = document.getElementById(id);
-  if (el) el.classList.toggle('expanded');
-};
+setInterval(()=>{
+  document.querySelectorAll('.rel-t').forEach(el=>{
+    const ts=parseInt(el.getAttribute('data-ts'));
+    if(ts)el.textContent=timeAgo(ts);
+  });
+},30000);
 
-// ======================== INITIALIZE ===========================
-function attachEventListeners() {
-  document.getElementById('soundBtn').addEventListener('click', toggleSound);
-  document.getElementById('settingsBtn').addEventListener('click', goSettings);
-  document.getElementById('navSignals').addEventListener('click', goSignals);
-  document.getElementById('navHistory').addEventListener('click', goHistory);
-  document.getElementById('navSettings').addEventListener('click', goSettings);
-  for (let i = 0; i <= 3; i++) {
-    document.getElementById(`tab${i}`).addEventListener('click', () => switchTab(i));
-  }
-  setInterval(() => {
-    document.querySelectorAll('.rel-t').forEach(el => {
-      const ts = parseInt(el.getAttribute('data-ts'));
-      if (ts) el.textContent = timeAgo(ts);
-    });
-  }, 30000);
+function startAutoRefresh(){
+  clearInterval(refreshTimer);
+  refreshTimer=setInterval(fetchAll,REFRESH_SEC*1000);
 }
 
-function startAutoRefresh() {
-  if (refreshTimer) clearInterval(refreshTimer);
-  refreshTimer = setInterval(fetchAll, REFRESH_SEC * 1000);
-}
-
-attachEventListeners();
-renderSettingsPage();
 fetchAll();
 startAutoRefresh();
 </script>
