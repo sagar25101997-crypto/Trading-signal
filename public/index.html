@@ -1128,7 +1128,7 @@ function renderHistory() {
     : `<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">NO HISTORY</div></div>`;
 }
 
-// ── FETCH FROM PROXY ─────────────────────────────────────────────────────────
+// ── FETCH FROM PROXY (FIXED - Uses openSignals from server) ─────────────────
 async function fetchAll() {
   const dot = document.getElementById('liveDot'), txt = document.getElementById('liveText');
   dot.style.background = 'var(--gold)';
@@ -1266,6 +1266,7 @@ async function fetchAll() {
   bar.offsetHeight;
   bar.style.animation = `shrink ${refreshSec}s linear infinite`;
 }
+
 // ── SWIPE (FIXED - Both Left and Right Working) ─────────────────────────────
 let txS = 0, tyS = 0, ttS = 0, swiping = false, swIndTimer = null;
 const wrapper = document.getElementById('pagesWrapper');
