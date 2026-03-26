@@ -1140,9 +1140,8 @@ async function fetchAll() {
         const response = await fetch(PROXY_URL + channel.url);
         const data = await response.json();
         
-        // IMPORTANT: Pehle openSignals se signals restore karo
+        // ✅ IMPORTANT: Pehle openSignals se signals restore karo
         if (data && data.openSignals && data.openSignals.length) {
-          // Open signals ko allSignals me add karo
           data.openSignals.forEach(signal => {
             const exists = allSignals[idx].some(s => 
               s.pair === signal.pair && 
@@ -1159,7 +1158,7 @@ async function fetchAll() {
           });
         }
         
-        // Phir naye messages process karo
+        // ✅ Phir naye messages process karo
         if (data && data.messages) {
           const signals = [];
           const raws = [];
@@ -1230,6 +1229,9 @@ async function fetchAll() {
           
           allSignals[idx] = filtered;
           renderChannelPage(idx, filtered, raws);
+        } else if (data && data.openSignals) {
+          // Agar sirf openSignals ho (messages nahi)
+          renderChannelPage(idx, allSignals[idx], []);
         }
       } catch (err) {
         console.error(`Error fetching ${channel.name}:`, err);
