@@ -309,10 +309,6 @@ body{background:var(--bg);color:var(--text);font-family:var(--ui);display:flex;f
           <button class="interval-btn" onclick="setRefreshInterval(30)">30s</button>
         </div>
       </div>
-      <div class="setting-row">
-        <div><div class="setting-label">Auto Refresh</div><div class="setting-sub">Automatic signal updates</div></div>
-        <div class="toggle on" id="autoRefreshToggle" onclick="toggleAutoRefresh()"></div>
-      </div>
     </div>
 
     <!-- 🔔 NOTIFICATIONS -->
@@ -459,7 +455,6 @@ const LS_SETTINGS_KEY = 'ts_settings';
 let soundOn = true;
 let showChannelBadge = true;
 let showRR = true;
-let autoRefresh = true;
 let refreshSec = 10;
 let currentTheme = 'dark';
 let currentFontSize = 'medium';
@@ -481,7 +476,6 @@ function loadSettings() {
       soundOn = settings.soundOn !== undefined ? settings.soundOn : true;
       showChannelBadge = settings.showChannelBadge !== undefined ? settings.showChannelBadge : true;
       showRR = settings.showRR !== undefined ? settings.showRR : true;
-      autoRefresh = settings.autoRefresh !== undefined ? settings.autoRefresh : true;
       refreshSec = settings.refreshSec || 10;
       currentTheme = settings.theme || 'dark';
       currentFontSize = settings.fontSize || 'medium';
@@ -494,7 +488,7 @@ function loadSettings() {
 
 function saveSettings() {
   const settings = {
-    soundOn, showChannelBadge, showRR, autoRefresh, refreshSec,
+    soundOn, showChannelBadge, showRR, refreshSec,
     theme: currentTheme, fontSize: currentFontSize, compactMode, fvOnlyAlerts
   };
   localStorage.setItem(LS_SETTINGS_KEY, JSON.stringify(settings));
@@ -540,7 +534,6 @@ function applySettings() {
   document.getElementById('soundToggle').className = 'toggle' + (soundOn ? ' on' : '');
   document.getElementById('badgeToggle').className = 'toggle' + (showChannelBadge ? ' on' : '');
   document.getElementById('rrToggle').className = 'toggle' + (showRR ? ' on' : '');
-  document.getElementById('autoRefreshToggle').className = 'toggle' + (autoRefresh ? ' on' : '');
   
   // Update refresh bar animation
   const bar = document.getElementById('refreshBar');
@@ -554,25 +547,9 @@ function setRefreshInterval(sec) {
   refreshSec = sec;
   saveSettings();
   applySettings();
-  if (autoRefresh) {
-    if (refreshInterval) clearInterval(refreshInterval);
-    refreshInterval = setInterval(fetchAll, refreshSec * 1000);
-  }
+  if (refreshInterval) clearInterval(refreshInterval);
+  refreshInterval = setInterval(fetchAll, refreshSec * 1000);
   showToast(`Refresh interval set to ${sec} seconds`, 'gold');
-}
-
-function toggleAutoRefresh() {
-  autoRefresh = !autoRefresh;
-  saveSettings();
-  applySettings();
-  if (autoRefresh) {
-    refreshInterval = setInterval(fetchAll, refreshSec * 1000);
-    showToast('Auto Refresh ON');
-  } else {
-    if (refreshInterval) clearInterval(refreshInterval);
-    refreshInterval = null;
-    showToast('Auto Refresh OFF');
-  }
 }
 
 function setTheme(theme) {
@@ -638,7 +615,6 @@ function resetAllSettings() {
     soundOn = true;
     showChannelBadge = true;
     showRR = true;
-    autoRefresh = true;
     refreshSec = 10;
     currentTheme = 'dark';
     currentFontSize = 'medium';
@@ -647,7 +623,7 @@ function resetAllSettings() {
     saveSettings();
     applySettings();
     if (refreshInterval) clearInterval(refreshInterval);
-    if (autoRefresh) refreshInterval = setInterval(fetchAll, refreshSec * 1000);
+    refreshInterval = setInterval(fetchAll, refreshSec * 1000);
     showToast('All settings reset to default');
   }
 }
@@ -1255,7 +1231,7 @@ async function fetchAll() {
   bar.style.animation = `shrink ${refreshSec}s linear infinite`;
 }
 
-// ── SWIPE ─────────────────────────────────────────────────────────────────────
+// ── SWIPE (FIXED - Both Left and Right Working) ─────────────────────────────
 let txS = 0, tyS = 0, ttS = 0, swiping = false, swIndTimer = null;
 const wrapper = document.getElementById('pagesWrapper');
 const swInd = document.getElementById('swipeIndicator');
@@ -1285,10 +1261,21 @@ mc.addEventListener('touchmove', e => {
 }, { passive: true });
 mc.addEventListener('touchend', e => {
   if (currentNav !== 'signals' || !swiping) return;
-  const dx = e.changedTouches[0].clientX - txS, dt = Date.now() - ttS;
-  if ((dt < 400 || Math.abs(dx) > 60) && Math.abs(dx) > 40) {
-    if (dx < 0 && currentTab < TAB_COUNT - 1) switchTab(currentTab + 1);
-    else if (dx > 0 && currentTab > 0) switchTab(currentTab - 1);
+  const dx = e.changedTouches[0].clientX - txS;
+  const dt = Date.now() - ttS;
+  
+  // FIXED: Both left and right swipe working
+  if ((dt < 400 || Math.abs(dx) > 50) && Math.abs(dx) > 35) {
+    if (dx < -35 && currentTab < TAB_COUNT - 1) {
+      // Left swipe - Next page
+      switchTab(currentTab + 1);
+      showSwipeHint(TAB_LABELS[currentTab + 1]);
+    } 
+    else if (dx > 35 && currentTab > 0) {
+      // Right swipe - Previous page
+      switchTab(currentTab - 1);
+      showSwipeHint(TAB_LABELS[currentTab - 1]);
+    }
   }
   swiping = false;
 }, { passive: true });
@@ -1298,7 +1285,6 @@ function switchTab(i) {
   currentTab = i;
   document.querySelectorAll('.tab').forEach((t, j) => t.className = 'tab' + (j === i ? ' active' : ''));
   setTabOffset(i);
-  showSwipeHint(TAB_LABELS[i]);
 }
 function setNav(id) {
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -1387,7 +1373,8 @@ if ('Notification' in window && Notification.permission === 'granted') {
 }
 
 fetchAll();
-if (autoRefresh) refreshInterval = setInterval(fetchAll, refreshSec * 1000);
+// Always auto-refresh - no toggle needed
+refreshInterval = setInterval(fetchAll, refreshSec * 1000);
 </script>
 </body>
 </html>
