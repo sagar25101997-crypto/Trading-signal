@@ -11,6 +11,7 @@
 <link rel="manifest" href="/manifest.json">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Exo+2:wght@300;400;600;700&display=swap" rel="stylesheet">
 <style>
+/* Same CSS as before - keeping it compact */
 :root {
   --bg:#0a0a0a; --bg2:#111111; --bg3:#181818;
   --border:#222222; --border2:#2a2a2a;
@@ -352,7 +353,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--ui);display:flex;f
       <div class="settings-title">ℹ️ ABOUT</div>
       <div class="info-row">
         <span class="info-label">Version</span>
-        <span class="info-value">v3.3</span>
+        <span class="info-value">v3.4</span>
       </div>
       <div class="info-row">
         <span class="info-label">Data Source</span>
@@ -406,16 +407,42 @@ const TAB_COUNT = 5;
 const LS_FV_KEY = 'ts_fv_symbols';
 const LS_SETTINGS_KEY = 'ts_settings';
 const LS_SIGNALS_KEY = 'ts_all_signals';
+const LS_HISTORY_KEY = 'ts_closed_history';
+
+// ========== HISTORY STORE (Permanent) ==========
+let closedHistory = [];
+
+function loadHistory() {
+  try {
+    const saved = localStorage.getItem(LS_HISTORY_KEY);
+    if (saved) closedHistory = JSON.parse(saved);
+  } catch(e) { closedHistory = []; }
+}
+
+function saveHistory() {
+  try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(closedHistory)); } catch(e) {}
+}
+
+function addToHistory(signal) {
+  // Add to history with timestamp
+  closedHistory.unshift({
+    ...signal,
+    closedAt: Math.floor(Date.now() / 1000)
+  });
+  // Keep last 500
+  if (closedHistory.length > 500) closedHistory = closedHistory.slice(0, 500);
+  saveHistory();
+}
 
 // ========== SIGNALS PERSISTENCE ==========
 function saveSignals() {
-  try { localStorage.setItem(LS_SIGNALS_KEY, JSON.stringify(allSignals)); } catch(e) { console.error("Save failed", e); }
+  try { localStorage.setItem(LS_SIGNALS_KEY, JSON.stringify(allSignals)); } catch(e) {}
 }
 function loadSignals() {
   try {
     const saved = localStorage.getItem(LS_SIGNALS_KEY);
     if (saved) return JSON.parse(saved);
-  } catch(e) { console.error("Load failed", e); }
+  } catch(e) {}
   return [[], [], []];
 }
 
@@ -434,6 +461,9 @@ let allSignals = loadSignals();
 let _uid = 0;
 let bellAlerts = [], bellUnread = 0, bellPanelOpen = false, seenAlertIds = new Set();
 let refreshInterval = null;
+
+// Load history on startup
+loadHistory();
 
 function loadSettings() {
   try {
@@ -513,8 +543,11 @@ function testNotification() {
 }
 function clearHistory() {
   if (confirm('Clear all trade history?')) {
-    allSignals.forEach((_, i) => { allSignals[i] = allSignals[i].filter(s => !s.hitType); });
-    saveSignals(); renderLivePage(); renderStarredPage(); renderHistory(); updateDataStats();
+    closedHistory = [];
+    saveHistory();
+    allSignals = [[], [], []];
+    saveSignals();
+    renderLivePage(); renderStarredPage(); renderHistory(); updateDataStats();
     showToast('History cleared');
   }
 }
@@ -528,11 +561,11 @@ function resetAllSettings() {
     showToast('Settings reset');
   }
 }
-function checkForUpdates() { showToast('Latest version v3.3', 'gold'); }
+function checkForUpdates() { showToast('Latest version v3.4', 'gold'); }
 function updateDataStats() {
-  let total=0, open=0, closed=0;
-  allSignals.forEach(sigs => { total+=sigs.length; open+=sigs.filter(s=>!s.hitType).length; closed+=sigs.filter(s=>s.hitType).length; });
-  document.getElementById('totalSignalsCount').textContent = total;
+  let total = 0, open = 0, closed = closedHistory.length;
+  allSignals.forEach(sigs => { total += sigs.length; open += sigs.filter(s=>!s.hitType).length; });
+  document.getElementById('totalSignalsCount').textContent = total + closed;
   document.getElementById('openTradesCount').textContent = open;
   document.getElementById('closedTradesCount').textContent = closed;
 }
@@ -914,13 +947,12 @@ function renderLivePage() {
 }
 
 function renderHistory() {
-  const all = [];
-  allSignals.forEach((sigs,ci) => sigs.forEach(s => all.push({...s, ch:CH_LABELS[ci]})));
-  const closed = all.filter(s => s.hitType === 'tp' || s.hitType === 'sl');
-  closed.sort((a,b) => b.ts-a.ts);
+  // Use permanent history store
+  const closed = [...closedHistory];
+  closed.sort((a,b) => (b.closedAt || b.ts) - (a.closedAt || a.ts));
   const wins = closed.filter(s => s.hitType === 'tp'), losses = closed.filter(s => s.hitType === 'sl');
   const winPct = closed.length > 0 ? Math.round(wins.length/closed.length*100) : 0;
-  const net = [...wins,...losses].reduce((acc,s) => acc + (s.pnl||0), 0);
+  const net = closed.reduce((acc,s) => acc + (s.pnl||0), 0);
   const netStr = (net>=0 ? '+$' : '-$') + Math.abs(net).toFixed(2);
   const pnlCls = net >= 0 ? 'pnl-pos' : 'pnl-neg';
   document.getElementById('histStatsHdr').innerHTML = `
@@ -935,17 +967,14 @@ function renderHistory() {
       </div>
     </div>`;
   document.getElementById('historyList').innerHTML = closed.length
-    ? closed.map(s => renderCard(s, true, true, true)).join('')
+    ? closed.map(s => renderCard({...s, ch: s.ch || 'FVG'}, true, true, true)).join('')
     : `<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">NO HISTORY</div></div>`;
 }
 
-// ── FETCH (FIXED — WITH BACKUP RESTORE AND PERMANENT CLOSE) ─────────────────
+// ── FETCH (FIXED — With permanent history) ─────────────────────────────────
 async function fetchAll() {
   const dot = document.getElementById('liveDot'), txt = document.getElementById('liveText');
   dot.style.background = 'var(--gold)'; txt.textContent = 'SYNC';
-  
-  // Save backup before fetch
-  const backupSignals = JSON.parse(JSON.stringify(allSignals));
   
   try {
     const fetchPromises = CHANNELS.map(async (channel, idx) => {
@@ -965,17 +994,19 @@ async function fetchAll() {
             const tpslResult = parseTPSL(msg.text);
             if (tpslResult) {
               const hitPair = extractPairFromTPSL(msg.text);
-              // SIMPLE MATCHING - direct pair comparison
               const matchSignal = allSignals[idx].find(s => !s.hitType && s.pair === hitPair);
               
               if (matchSignal) {
                 matchSignal.hitType = tpslResult.type;
                 matchSignal.pnl = tpslResult.pnl;
                 matchSignal.hitTs = ts;
+                matchSignal.ch = CH_LABELS[idx];
                 
-                // ✅ MOVE FROM OPEN TO CLOSED PERMANENTLY
+                // ✅ Add to permanent history
+                addToHistory(matchSignal);
+                
+                // ✅ Remove from open signals completely
                 allSignals[idx] = allSignals[idx].filter(s => s.id !== matchSignal.id);
-                allSignals[idx].push(matchSignal);
                 
                 addBellAlert(
                   tpslResult.type, msg.text, matchSignal.pair, ts,
@@ -990,10 +1021,15 @@ async function fetchAll() {
             // ── Step 2: Try to parse as new signal ──
             const parsed = parseSignal(msg.text);
             if (parsed && parsed.dir && parsed.pair) {
-              const exists = allSignals[idx].some(s =>
+              // Check if already exists in open signals or history
+              const existsInOpen = allSignals[idx].some(s =>
                 s.pair === parsed.pair && s.dir === parsed.dir && !s.hitType
               );
-              if (!exists) {
+              const existsInHistory = closedHistory.some(s =>
+                s.pair === parsed.pair && s.dir === parsed.dir
+              );
+              
+              if (!existsInOpen && !existsInHistory) {
                 newSigs.push({
                   ...parsed, ts, id: Date.now() + Math.random(),
                   isNew: true, hitType: null, pnl: null,
@@ -1017,8 +1053,7 @@ async function fetchAll() {
           });
           unique.sort((a,b) => b.ts - a.ts);
           
-          const closedSigs = allSignals[idx].filter(s => s.hitType);
-          allSignals[idx] = [...unique, ...closedSigs];
+          allSignals[idx] = unique;
           renderChannelPage(idx, allSignals[idx], raws);
         }
       } catch(err) {
@@ -1028,19 +1063,7 @@ async function fetchAll() {
     
     await Promise.all(fetchPromises);
     
-    // ✅ Backup restore logic - if signals lost, restore from backup
-    const hasOpenSignals = allSignals.some(ch => ch.some(s => !s.hitType));
-    const backupHadSignals = backupSignals.some(ch => ch.some(s => !s.hitType));
-    
-    if (!hasOpenSignals && backupHadSignals) {
-      console.log("⚠️ Signals lost! Restoring from backup...");
-      allSignals = backupSignals;
-      saveSignals();
-      allSignals.forEach((sigs, i) => renderChannelPage(i, sigs, []));
-    } else {
-      saveSignals();
-    }
-    
+    saveSignals();
     renderLivePage(); renderStarredPage(); renderHistory(); updateDataStats();
     
     setTimeout(() => {
@@ -1052,12 +1075,7 @@ async function fetchAll() {
     
   } catch(err) {
     console.error('Fetch error:', err);
-    // Restore from backup on error
-    allSignals = backupSignals;
-    saveSignals();
-    allSignals.forEach((sigs, i) => renderChannelPage(i, sigs, []));
-    renderLivePage(); renderStarredPage(); renderHistory();
-    showToast('Connection error - using saved signals', 'red');
+    showToast('Connection error', 'red');
   }
   
   dot.style.background = 'var(--green)'; txt.textContent = 'LIVE';
@@ -1119,7 +1137,7 @@ registerSW();
 loadSettings();
 updateFvStarCount();
 allSignals.forEach((sigs,i) => renderChannelPage(i,sigs,[]));
-renderLivePage(); renderStarredPage();
+renderLivePage(); renderStarredPage(); renderHistory();
 if('Notification' in window && Notification.permission==='granted') {
   const s=document.getElementById('notifStatus'), t=document.getElementById('notifToggle');
   if(s){s.textContent='ENABLED';s.style.color='var(--green)';}
