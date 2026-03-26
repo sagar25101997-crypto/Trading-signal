@@ -6,9 +6,9 @@ const app = express();
 app.use(cors());
 
 const CHANNELS = [
-  { name: 'DAILY SIGNAL', token: '8517848241:AAFqisy45BmSTk9PpUWN2KxliyY3YTJ-Iqs', chatId: '-1003823176395' },
-  { name: 'FVG SIGNAL',   token: '8748227924:AAG09vfNAI_O3T9b-E_aWTaeR81J4QDynCE', chatId: '-1003842429805' },
-  { name: 'CRT SIGNAL',   token: '8379004300:AAEAmp9LoA5LTbIdxHoIpsKAmAVfUr0iapM', chatId: '-1003562279289' },
+  { name: 'DAILY', token: '8517848241:AAFqisy45BmSTk9PpUWN2KxliyY3YTJ-Iqs', chatId: '-1003823176395' },
+  { name: 'FVG',   token: '8748227924:AAG09vfNAI_O3T9b-E_aWTaeR81J4QDynCE', chatId: '-1003842429805' },
+  { name: 'CRT',   token: '8379004300:AAEAmp9LoA5LTbIdxHoIpsKAmAVfUr0iapM', chatId: '-1003562279289' },
 ];
 
 // Har channel ka offset track karo
@@ -29,6 +29,49 @@ function telegramGet(token, method, params) {
   });
 }
 
+// Common function to get messages from a channel
+async function getChannelMessages(channel) {
+  try {
+    const params = {
+      limit: 50,
+      allowed_updates: JSON.stringify(['message', 'channel_post'])
+    };
+    if (offsets[channel.chatId]) {
+      params.offset = offsets[channel.chatId];
+    }
+
+    const data = await telegramGet(channel.token, 'getUpdates', params);
+    if (!data.ok) return [];
+
+    const messages = data.result
+      .filter(u => {
+        const msg = u.message || u.channel_post;
+        return msg && String(msg.chat.id) === channel.chatId;
+      })
+      .map(u => {
+        const msg = u.message || u.channel_post;
+        return {
+          text: msg.text || msg.caption || '',
+          timestamp: msg.date,
+          update_id: u.update_id
+        };
+      })
+      .filter(m => m.text)
+      .reverse();
+
+    // Offset update karo next call ke liye
+    if (data.result.length > 0) {
+      const lastId = data.result[data.result.length - 1].update_id;
+      offsets[channel.chatId] = lastId + 1;
+    }
+
+    return messages;
+  } catch(e) {
+    console.error(`Error fetching ${channel.name}:`, e.message);
+    return [];
+  }
+}
+
 // Server start hote hi sabka offset reset karo (purane messages skip)
 async function initOffsets() {
   for (const ch of CHANNELS) {
@@ -38,10 +81,8 @@ async function initOffsets() {
         allowed_updates: JSON.stringify(['message', 'channel_post'])
       });
       if (data.ok && data.result.length > 0) {
-        // Sabse last update ka offset set karo — purane sab skip
         const lastId = data.result[data.result.length - 1].update_id;
         offsets[ch.chatId] = lastId + 1;
-        // Telegram ko bhi batao — consume kar lo purane
         await telegramGet(ch.token, 'getUpdates', {
           offset: offsets[ch.chatId],
           limit: 1,
@@ -60,38 +101,34 @@ async function initOffsets() {
   console.log('🚀 All offsets initialized — only NEW messages will show!');
 }
 
-// GET /signals — sirf naye messages return karo
+// ========== INDIVIDUAL ENDPOINTS FOR EACH CHANNEL ==========
+app.get('/daily', async (req, res) => {
+  const channel = CHANNELS.find(c => c.name === 'DAILY');
+  if (!channel) return res.json({ messages: [] });
+  const messages = await getChannelMessages(channel);
+  res.json({ messages });
+});
+
+app.get('/fvg', async (req, res) => {
+  const channel = CHANNELS.find(c => c.name === 'FVG');
+  if (!channel) return res.json({ messages: [] });
+  const messages = await getChannelMessages(channel);
+  res.json({ messages });
+});
+
+app.get('/crt', async (req, res) => {
+  const channel = CHANNELS.find(c => c.name === 'CRT');
+  if (!channel) return res.json({ messages: [] });
+  const messages = await getChannelMessages(channel);
+  res.json({ messages });
+});
+
+// GET /signals — Combined endpoint (backward compatibility)
 app.get('/signals', async (req, res) => {
   try {
     const results = await Promise.all(CHANNELS.map(async (ch) => {
-      try {
-        const params = {
-          limit: 50,
-          allowed_updates: JSON.stringify(['message', 'channel_post'])
-        };
-        // Offset set hai toh naye messages hi lo
-        if (offsets[ch.chatId]) {
-          params.offset = offsets[ch.chatId];
-        }
-
-        const data = await telegramGet(ch.token, 'getUpdates', params);
-        if (!data.ok) return { name: ch.name, chatId: ch.chatId, messages: [], error: data.description };
-
-        const messages = data.result.filter(u => {
-          const msg = u.message || u.channel_post;
-          return msg && String(msg.chat.id) === ch.chatId;
-        }).reverse();
-
-        // Offset update karo next call ke liye
-        if (data.result.length > 0) {
-          const lastId = data.result[data.result.length - 1].update_id;
-          offsets[ch.chatId] = lastId + 1;
-        }
-
-        return { name: ch.name, chatId: ch.chatId, messages };
-      } catch(e) {
-        return { name: ch.name, chatId: ch.chatId, messages: [], error: e.message };
-      }
+      const messages = await getChannelMessages(ch);
+      return { name: ch.name, chatId: ch.chatId, messages };
     }));
     res.json({ ok: true, channels: results });
   } catch(e) {
@@ -99,7 +136,7 @@ app.get('/signals', async (req, res) => {
   }
 });
 
-// GET /reset — manually reset karo (optional)
+// GET /reset — manually reset karo
 app.get('/reset', async (req, res) => {
   await initOffsets();
   res.json({ ok: true, message: 'Offsets reset! Sirf naye signals dikhenge.' });
@@ -111,6 +148,12 @@ app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.ht
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
-  console.log('Server running on port', PORT);
-  await initOffsets(); // Server start hote hi purane messages skip karo
+  console.log('🚀 Server running on port', PORT);
+  console.log('📡 Endpoints:');
+  console.log('   GET /daily  - DAILY channel signals');
+  console.log('   GET /fvg    - FVG channel signals');
+  console.log('   GET /crt    - CRT channel signals');
+  console.log('   GET /signals - All channels combined');
+  console.log('   GET /reset  - Reset offsets');
+  await initOffsets();
 });
