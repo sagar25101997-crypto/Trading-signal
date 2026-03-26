@@ -1083,7 +1083,7 @@ async function fetchAll() {
         const response = await fetch(PROXY_URL + channel.url);
         const data = await response.json();
         
-        if (data && data.messages) {
+        if (data && data.messages && data.messages.length > 0) {
           const signals = [];
           const raws = [];
           
