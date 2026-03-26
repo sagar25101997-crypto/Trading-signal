@@ -348,6 +348,14 @@ let soundOn=true, currentTab=0, currentNav='signals';
 let allSignals=[[],[],[]], seenIds=new Set(), _uid=0;
 let bellAlerts=[], bellUnread=0, bellPanelOpen=false, seenAlertIds=new Set();
 
+// ── HAPTIC FEEDBACK ──────────────────────────────────────────────────────────
+function vibrate(type) {
+  if (!navigator.vibrate) return;
+  if (type === 'tp')       navigator.vibrate([100, 50, 100, 50, 300]); // 🎯 TP
+  else if (type === 'sl')  navigator.vibrate([300, 100, 300]);          // ❌ SL
+  else                     navigator.vibrate([100, 50, 100]);            // 📡 New signal
+}
+
 // ── AUDIO ────────────────────────────────────────────────────────────────────
 const AudioCtx = window.AudioContext || window.webkitAudioContext;
 let audioCtx = null;
@@ -360,6 +368,7 @@ document.addEventListener('touchstart', unlockAudio, { once:true });
 document.addEventListener('click',      unlockAudio, { once:true });
 
 function playBeep(type) {
+  vibrate(type); // Haptic feedback
   if (!soundOn) return;
   try {
     if (!audioCtx) audioCtx = new AudioCtx();
@@ -463,26 +472,12 @@ function toggleSound() {
 }
 
 // ── TP/SL DETECT ─────────────────────────────────────────────────────────────
-// Sirf in formats ko match karo:
-// 🟢 TP HIT : XAUUSD  /  Profit : +$42.06
-// ❌ SL HIT : XAUUSD  /  Loss : -27.74
 function parseTPSL(text) {
   if (!text) return null;
   const t = text.toUpperCase();
-  if (/TP\s*HIT/.test(t)) return 'tp';
-  if (/SL\s*HIT/.test(t)) return 'sl';
+  if (/TP\s*[12]?\s*(HIT|REACHED|DONE)|TARGET\s*(HIT|REACHED)|🎯/.test(t)) return 'tp';
+  if (/SL\s*(HIT|REACHED|TRIGGERED)|STOP\s*LOSS\s*(HIT|TRIGGERED)|STOPPED\s*OUT|❌/.test(t)) return 'sl';
   return null;
-}
-
-// PnL amount extract karo TP/SL message se
-function parsePnl(text) {
-  if (!text) return null;
-  // Profit : +$42.06  ya  Loss : -27.74
-  const pm = text.match(/(?:Profit|Loss)\s*:\s*[+\-]?\$?([0-9]+\.?[0-9]*)/i);
-  if (!pm) return null;
-  const val = parseFloat(pm[1]);
-  const isLoss = /Loss/i.test(text);
-  return isLoss ? -val : val;
 }
 
 function addBellAlert(type, text, pair, ts, pnl, dir, entry) {
@@ -533,47 +528,25 @@ function renderBellPanel() {
 }
 
 // ── PARSE SIGNAL ──────────────────────────────────────────────────────────────
-// Sirf is exact format ko match karo:
-// 🟢 BUY : XAUUSD
-// Entry  : 4333.73
-// SL     : 4305.69
-// TP     : 4375.79
 function parseSignal(text) {
   if (!text) return null;
   const t = text.toUpperCase();
-
-  // TP HIT / SL HIT messages ko entry signal mat samjho
-  if (/TP\s*HIT|SL\s*HIT|PROFIT\s*:|LOSS\s*:/.test(t)) return null;
-
-  // Strict check: BUY ya SELL hona chahiye + Entry + SL + TP teeno
   let dir = null;
-  if (/(?:🟢|🔴)?\s*BUY\s*:/.test(t)) dir = 'buy';
-  else if (/(?:🟢|🔴)?\s*SELL\s*:/.test(t)) dir = 'sell';
-  if (!dir) return null;
-
-  // Pair extract karo (BUY : XAUUSD)
-  const pm = text.match(/(?:BUY|SELL)\s*:\s*([A-Z]{3,6})/i);
-  const pair = pm ? pm[1].toUpperCase() : null;
-  if (!pair) return null;
-
-  // Entry, SL, TP — teeno required hain
-  const em = text.match(/Entry\s*:\s*([0-9]+\.?[0-9]*)/i);
-  const sm = text.match(/SL\s*:\s*([0-9]+\.?[0-9]*)/i);
-  const tm = text.match(/TP\s*:\s*([0-9]+\.?[0-9]*)/i);
-
-  const entry = em ? em[1] : null;
-  const sl    = sm ? sm[1] : null;
-  const tp    = tm ? tm[1] : null;
-
-  // Teeno nahi hain toh ignore
-  if (!entry || !sl || !tp) return null;
-
-  // R:R calculate karo
+  if (/\bBUY\b/.test(t))  dir = 'buy';
+  else if (/\bSELL\b/.test(t)) dir = 'sell';
+  const pm = text.match(/\b([A-Z]{3}[\/\.]?[A-Z]{3})\b/i) || text.match(/\b([A-Z]{6})\b/);
+  const pair  = pm ? pm[1].toUpperCase().replace(/[\/\.]/g,'') : null;
+  const em = text.match(/(?:ENTRY|PRICE|@)\s*[:\-]?\s*([0-9]+\.?[0-9]*)/i);
+  const sm = text.match(/(?:SL|STOP[- ]?LOSS)\s*[:\-]?\s*([0-9]+\.?[0-9]*)/i);
+  const tm = text.match(/(?:TP\s*[12]?|TAKE[- ]?PROFIT\s*[12]?)\s*[:\-]?\s*([0-9]+\.?[0-9]*)/i);
+  const entry=em?em[1]:null, sl=sm?sm[1]:null, tp=tm?tm[1]:null;
+  if (!dir && !pair) return null;
   let rr = null;
-  const e=parseFloat(entry), s=parseFloat(sl), t2=parseFloat(tp);
-  const risk=Math.abs(e-s), reward=Math.abs(t2-e);
-  if (risk > 0) rr = '1:' + (reward/risk).toFixed(1);
-
+  if (entry && sl && tp) {
+    const e=parseFloat(entry),s=parseFloat(sl),t2=parseFloat(tp);
+    const risk=Math.abs(e-s), reward=Math.abs(t2-e);
+    if (risk>0) rr='1:'+(reward/risk).toFixed(1);
+  }
   return { dir, pair, entry, sl, tp, rr };
 }
 
@@ -784,60 +757,47 @@ function renderHistCard(s) {
 </div>`;
 }
 
-// ── FETCH (LIVE MODE) ────────────────────────────────────────────────────────
+// ── DEMO DATA ─────────────────────────────────────────────────────────────────
+const now = Math.floor(Date.now()/1000);
+const DEMO_CHANNELS = [
+  // Channel 0 → DAILY
+  [
+    { dir:'buy',  pair:'XAUUSD', entry:'2318.50', sl:'2308.00', tp:'2338.00', rr:'1:1.9', ts: now-600,   id:1001, isNew:true,  hitType:null,  pnl:null },
+    { dir:'sell', pair:'EURUSD', entry:'1.08450',  sl:'1.08750', tp:'1.07950', rr:'1:1.7', ts: now-3600,  id:1002, isNew:false, hitType:'tp',  pnl:+85 },
+    { dir:'buy',  pair:'GBPUSD', entry:'1.26800',  sl:'1.26300', tp:'1.27600', rr:'1:1.6', ts: now-7200,  id:1003, isNew:false, hitType:'sl',  pnl:-50 },
+    { dir:'sell', pair:'USDJPY', entry:'157.200',  sl:'158.000', tp:'155.800', rr:'1:1.8', ts: now-10800, id:1004, isNew:false, hitType:null,  pnl:null },
+    { dir:'buy',  pair:'AUDUSD', entry:'0.65120',  sl:'0.64700', tp:'0.65900', rr:'1:1.9', ts: now-14400, id:1005, isNew:false, hitType:'tp',  pnl:+78 },
+  ],
+  // Channel 1 → FVG
+  [
+    { dir:'sell', pair:'XAUUSD', entry:'2322.00', sl:'2330.00', tp:'2305.00', rr:'1:2.1', ts: now-900,   id:2001, isNew:true,  hitType:null,  pnl:null },
+    { dir:'buy',  pair:'USDCAD', entry:'1.36450', sl:'1.35900', tp:'1.37400', rr:'1:1.7', ts: now-5400,  id:2002, isNew:false, hitType:'tp',  pnl:+95 },
+    { dir:'buy',  pair:'NZDUSD', entry:'0.60350', sl:'0.59900', tp:'0.61100', rr:'1:1.7', ts: now-9000,  id:2003, isNew:false, hitType:null,  pnl:null },
+  ],
+  // Channel 2 → CRT
+  [
+    { dir:'buy',  pair:'BTCUSD', entry:'67450',   sl:'65800',   tp:'70200',   rr:'1:1.7', ts: now-300,   id:3001, isNew:true,  hitType:null,  pnl:null },
+    { dir:'sell', pair:'GBPJPY', entry:'200.500', sl:'201.500', tp:'198.500', rr:'1:2.0', ts: now-4200,  id:3002, isNew:false, hitType:'sl',  pnl:-40 },
+    { dir:'buy',  pair:'USDCHF', entry:'0.90850', sl:'0.90400', tp:'0.91600', rr:'1:1.7', ts: now-8100,  id:3003, isNew:false, hitType:'tp',  pnl:+110 },
+    { dir:'sell', pair:'EURJPY', entry:'169.200', sl:'170.200', tp:'167.200', rr:'1:2.0', ts: now-12600, id:3004, isNew:false, hitType:null,  pnl:null },
+  ]
+];
+
+// ── FETCH (DEMO MODE) ─────────────────────────────────────────────────────────
 async function fetchAll(){
   const dot=document.getElementById('liveDot'),txt=document.getElementById('liveText');
   dot.style.background='var(--gold)';dot.style.boxShadow='0 0 6px var(--gold)';txt.textContent='SYNC';
-  try{
-    const res=await fetch(PROXY_URL+'/signals');
-    if(!res.ok)throw new Error('HTTP '+res.status);
-    const data=await res.json();
-    if(!data.ok)throw new Error(data.error||'Proxy error');
 
-    let newCount=0;
-    data.channels.forEach((ch,i)=>{
-      const signals=[],raws=[];
-      (ch.messages||[]).forEach(m=>{
-        const msg=m.message||m.channel_post;
-        if(!msg)return;
-        const text=msg.text||msg.caption||'';
-        const id=msg.message_id,ts=msg.date;
-        const isNew=!seenIds.has(id);
-        const tpsl=parseTPSL(text);
-        const pnl=tpsl?parsePnl(text):null;
-        const parsed=parseSignal(text);
+  await new Promise(r=>setTimeout(r,600)); // simulate loading
 
-        if(tpsl&&isNew){
-          // TP/SL HIT message — pair extract karo
-          const pairM=text.match(/(?:TP|SL)\s*HIT\s*:\s*([A-Z]{3,6})/i);
-          const hitPair=pairM?pairM[1].toUpperCase():(parsed?.pair||null);
-          addBellAlert(tpsl,text,hitPair,ts,pnl,null,null);
-        }
-        if(parsed){
-          if(isNew)newCount++;
-          signals.push({...parsed,text,ts,id,isNew,hitType:tpsl,pnl});
-        }
-        // Baaki sab messages ignore — raws mein bhi mat daalo
-        seenIds.add(id);
-      });
-      allSignals[i]=signals;
-      renderChannelPage(i,signals,[]);
-    });
+  DEMO_CHANNELS.forEach((chSigs, i) => {
+    allSignals[i] = chSigs;
+    renderChannelPage(i, chSigs, []);
+  });
+  renderLivePage();
+  renderHistory();
 
-    renderLivePage();
-    if(newCount>0){
-      playBeep('new');
-      showToast(newCount+' NEW SIGNAL'+(newCount>1?'S':''));
-      allSignals.forEach(sigs=>sigs.filter(s=>s.isNew).forEach(s=>sendNotification('new',s.pair,null,s.dir,s.entry)));
-    }
-    renderHistory();
-
-    dot.style.background='var(--green)';dot.style.boxShadow='0 0 6px var(--green)';txt.textContent='LIVE';
-  }catch(e){
-    console.error(e);
-    dot.style.background='var(--red)';dot.style.boxShadow='none';txt.textContent='ERR';
-    showToast('CONNECTION ERROR','red');
-  }
+  dot.style.background='var(--green)';dot.style.boxShadow='0 0 6px var(--green)';txt.textContent='LIVE';
   const bar=document.getElementById('refreshBar');
   bar.style.animation='none';bar.offsetHeight;bar.style.animation='';
 }
