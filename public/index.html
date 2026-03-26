@@ -1140,6 +1140,26 @@ async function fetchAll() {
         const response = await fetch(PROXY_URL + channel.url);
         const data = await response.json();
         
+        // IMPORTANT: Pehle openSignals se signals restore karo
+        if (data && data.openSignals && data.openSignals.length) {
+          // Open signals ko allSignals me add karo
+          data.openSignals.forEach(signal => {
+            const exists = allSignals[idx].some(s => 
+              s.pair === signal.pair && 
+              s.dir === signal.dir && 
+              !s.hitType
+            );
+            if (!exists) {
+              allSignals[idx].push({
+                ...signal,
+                ch: CH_LABELS[idx],
+                isNew: false
+              });
+            }
+          });
+        }
+        
+        // Phir naye messages process karo
         if (data && data.messages) {
           const signals = [];
           const raws = [];
@@ -1176,7 +1196,8 @@ async function fetchAll() {
                     isNew: true,
                     hitType: null,
                     pnl: null,
-                    rawText: msg.text
+                    rawText: msg.text,
+                    ch: CH_LABELS[idx]
                   });
                   if (soundOn) playBeep('new');
                 }
@@ -1189,10 +1210,23 @@ async function fetchAll() {
             }
           });
           
-          const existingSignals = allSignals[idx] || [];
-          const newSignals = [...signals, ...existingSignals.filter(s => !s.hitType)];
-          newSignals.sort((a, b) => b.ts - a.ts);
-          const filtered = newSignals.filter(s => (Date.now() / 1000 - s.ts) < 86400);
+          // Merge existing open signals with new signals
+          const existingOpenSignals = allSignals[idx].filter(s => !s.hitType);
+          const newSignals = [...signals, ...existingOpenSignals];
+          
+          // Remove duplicates by pair+dir
+          const uniqueSignals = [];
+          const seen = new Set();
+          newSignals.forEach(s => {
+            const key = `${s.pair}_${s.dir}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              uniqueSignals.push(s);
+            }
+          });
+          
+          uniqueSignals.sort((a, b) => b.ts - a.ts);
+          const filtered = uniqueSignals.filter(s => (Date.now() / 1000 - s.ts) < 86400);
           
           allSignals[idx] = filtered;
           renderChannelPage(idx, filtered, raws);
@@ -1230,7 +1264,6 @@ async function fetchAll() {
   bar.offsetHeight;
   bar.style.animation = `shrink ${refreshSec}s linear infinite`;
 }
-
 // ── SWIPE (FIXED - Both Left and Right Working) ─────────────────────────────
 let txS = 0, tyS = 0, ttS = 0, swiping = false, swIndTimer = null;
 const wrapper = document.getElementById('pagesWrapper');
