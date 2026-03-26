@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const https = require('https');
 const path = require('path');
+const fs = require('fs');
 const app = express();
 app.use(cors());
 
@@ -11,14 +12,29 @@ const CHANNELS = [
   { name: 'CRT',   token: '8379004300:AAEAmp9LoA5LTbIdxHoIpsKAmAVfUr0iapM', chatId: '-1003562279289' },
 ];
 
-// In-memory cache — server jab tak live hai, messages yaad rakhta hai
-const offsets = {};
-const messageCache = {}; // chatId -> [{ text, timestamp }]
-CHANNELS.forEach(ch => {
-  offsets[ch.chatId] = 0;
-  messageCache[ch.chatId] = [];
-});
+const DATA_FILE = path.join(__dirname, 'messages_cache.json');
 
+// ── Persistent cache load/save ────────────────────────────────────────────────
+function loadCache() {
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    }
+  } catch(e) {}
+  const empty = {};
+  CHANNELS.forEach(ch => { empty[ch.chatId] = []; });
+  return empty;
+}
+
+function saveCache(cache) {
+  try { fs.writeFileSync(DATA_FILE, JSON.stringify(cache), 'utf8'); } catch(e) {}
+}
+
+let messageCache = loadCache();
+const offsets = {};
+CHANNELS.forEach(ch => { offsets[ch.chatId] = 0; });
+
+// ── Telegram helper ───────────────────────────────────────────────────────────
 function telegramGet(token, method, params) {
   return new Promise((resolve, reject) => {
     const qs = new URLSearchParams(params).toString();
@@ -26,19 +42,17 @@ function telegramGet(token, method, params) {
     https.get(url, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try { resolve(JSON.parse(data)); }
-        catch(e) { reject(e); }
-      });
+      res.on('end', () => { try { resolve(JSON.parse(data)); } catch(e) { reject(e); } });
     }).on('error', reject);
   });
 }
 
-// Telegram se naye messages fetch karo aur cache mein add karo
+// ── Poll one channel, append to persistent cache ──────────────────────────────
 async function pollChannel(channel) {
   try {
     const params = { limit: 100, timeout: 0 };
     if (offsets[channel.chatId] > 0) params.offset = offsets[channel.chatId];
+
     const data = await telegramGet(channel.token, 'getUpdates', params);
     if (!data.ok) return;
 
@@ -54,25 +68,28 @@ async function pollChannel(channel) {
       .filter(m => m.text);
 
     if (newMsgs.length > 0) {
-      // Cache mein add karo, duplicates avoid karo (timestamp+text key se)
+      if (!messageCache[channel.chatId]) messageCache[channel.chatId] = [];
+
       const existingKeys = new Set(
         messageCache[channel.chatId].map(m => `${m.timestamp}_${m.text}`)
       );
+      let added = 0;
       newMsgs.forEach(m => {
         const key = `${m.timestamp}_${m.text}`;
         if (!existingKeys.has(key)) {
           messageCache[channel.chatId].push(m);
           existingKeys.add(key);
+          added++;
         }
       });
 
-      // Last 200 messages rakho, purane hatao
-      messageCache[channel.chatId].sort((a, b) => b.timestamp - a.timestamp);
-      if (messageCache[channel.chatId].length > 200) {
+      if (added > 0) {
+        // Sort newest first, keep last 200
+        messageCache[channel.chatId].sort((a, b) => b.timestamp - a.timestamp);
         messageCache[channel.chatId] = messageCache[channel.chatId].slice(0, 200);
+        saveCache(messageCache);
+        console.log(`📨 ${channel.name}: +${added} new, total=${messageCache[channel.chatId].length}`);
       }
-
-      console.log(`📨 ${channel.name}: ${newMsgs.length} new msg(s), cache=${messageCache[channel.chatId].length}`);
     }
 
     if (data.result.length > 0) {
@@ -83,31 +100,26 @@ async function pollChannel(channel) {
   }
 }
 
-// Har 5 second mein sabhi channels poll karo
 async function pollAll() {
-  for (const ch of CHANNELS) {
-    await pollChannel(ch);
-  }
+  for (const ch of CHANNELS) await pollChannel(ch);
 }
-setInterval(pollAll, 5000);
 
-// Startup pe ek baar turant poll karo
+// Poll every 5 seconds
+setInterval(pollAll, 5000);
 pollAll().then(() => console.log('✅ Initial poll done'));
 
-// Routes — cache se return karo (server restart pe bhi cached data hai jab tak process live hai)
+// ── Routes ────────────────────────────────────────────────────────────────────
 app.get('/daily', (req, res) => {
   const ch = CHANNELS.find(c => c.name === 'DAILY');
-  res.json({ messages: messageCache[ch.chatId] });
+  res.json({ messages: messageCache[ch.chatId] || [] });
 });
-
 app.get('/fvg', (req, res) => {
   const ch = CHANNELS.find(c => c.name === 'FVG');
-  res.json({ messages: messageCache[ch.chatId] });
+  res.json({ messages: messageCache[ch.chatId] || [] });
 });
-
 app.get('/crt', (req, res) => {
   const ch = CHANNELS.find(c => c.name === 'CRT');
-  res.json({ messages: messageCache[ch.chatId] });
+  res.json({ messages: messageCache[ch.chatId] || [] });
 });
 
 app.get('/reset', (req, res) => {
@@ -119,6 +131,4 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log('Server running on port', PORT);
-});
+app.listen(PORT, () => console.log('Server running on port', PORT));
