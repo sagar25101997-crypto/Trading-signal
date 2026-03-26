@@ -11,7 +11,6 @@
 <link rel="manifest" href="/manifest.json">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Exo+2:wght@300;400;600;700&display=swap" rel="stylesheet">
 <style>
-/* Your existing CSS - keep it exactly as before */
 :root {
   --bg:#0a0a0a; --bg2:#111111; --bg3:#181818;
   --border:#222222; --border2:#2a2a2a;
@@ -213,7 +212,6 @@ body{background:var(--bg);color:var(--text);font-family:var(--ui);display:flex;f
 </style>
 </head>
 <body>
-<!-- Same HTML body as your old one - keep all the divs exactly as they were -->
 <div class="header">
   <div class="header-logo">LIVE <span>TRADING</span> SIGNAL</div>
   <div class="live-badge">
@@ -263,7 +261,6 @@ body{background:var(--bg);color:var(--text);font-family:var(--ui);display:flex;f
     <div id="histStatsHdr"></div><div id="historyList"></div>
   </div>
   <div class="overlay-page" id="pageSettings">
-    <!-- Settings content - keep same as your old HTML -->
     <div class="settings-section">
       <div class="settings-title">📡 SIGNAL SETTINGS</div>
       <div class="setting-row">
@@ -355,7 +352,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--ui);display:flex;f
       <div class="settings-title">ℹ️ ABOUT</div>
       <div class="info-row">
         <span class="info-label">Version</span>
-        <span class="info-value">v3.2</span>
+        <span class="info-value">v3.3</span>
       </div>
       <div class="info-row">
         <span class="info-label">Data Source</span>
@@ -405,15 +402,14 @@ const CHANNELS = [
 ];
 const CH_LABELS = ['DAILY', 'FVG', 'CRT'];
 const TAB_LABELS = ['LIVE', 'DAILY', 'FVG', 'CRT', '⭐ FV'];
+const TAB_COUNT = 5;
 const LS_FV_KEY = 'ts_fv_symbols';
 const LS_SETTINGS_KEY = 'ts_settings';
 const LS_SIGNALS_KEY = 'ts_all_signals';
 
 // ========== SIGNALS PERSISTENCE ==========
 function saveSignals() {
-  try {
-    localStorage.setItem(LS_SIGNALS_KEY, JSON.stringify(allSignals));
-  } catch(e) {}
+  try { localStorage.setItem(LS_SIGNALS_KEY, JSON.stringify(allSignals)); } catch(e) {}
 }
 function loadSignals() {
   try {
@@ -439,39 +435,36 @@ let _uid = 0;
 let bellAlerts = [], bellUnread = 0, bellPanelOpen = false, seenAlertIds = new Set();
 let refreshInterval = null;
 
-// Load saved settings
 function loadSettings() {
   try {
     const saved = localStorage.getItem(LS_SETTINGS_KEY);
     if (saved) {
-      const settings = JSON.parse(saved);
-      soundOn = settings.soundOn !== undefined ? settings.soundOn : true;
-      showChannelBadge = settings.showChannelBadge !== undefined ? settings.showChannelBadge : true;
-      showRR = settings.showRR !== undefined ? settings.showRR : true;
-      refreshSec = settings.refreshSec || 10;
-      currentTheme = settings.theme || 'dark';
-      currentFontSize = settings.fontSize || 'medium';
-      compactMode = settings.compactMode || false;
-      fvOnlyAlerts = settings.fvOnlyAlerts || false;
+      const s = JSON.parse(saved);
+      soundOn = s.soundOn !== undefined ? s.soundOn : true;
+      showChannelBadge = s.showChannelBadge !== undefined ? s.showChannelBadge : true;
+      showRR = s.showRR !== undefined ? s.showRR : true;
+      refreshSec = s.refreshSec || 10;
+      currentTheme = s.theme || 'dark';
+      currentFontSize = s.fontSize || 'medium';
+      compactMode = s.compactMode || false;
+      fvOnlyAlerts = s.fvOnlyAlerts || false;
     }
   } catch(e) {}
   applySettings();
 }
 
 function saveSettings() {
-  const settings = {
+  localStorage.setItem(LS_SETTINGS_KEY, JSON.stringify({
     soundOn, showChannelBadge, showRR, refreshSec,
     theme: currentTheme, fontSize: currentFontSize, compactMode, fvOnlyAlerts
-  };
-  localStorage.setItem(LS_SETTINGS_KEY, JSON.stringify(settings));
+  }));
 }
 
 function applySettings() {
   document.body.classList.remove('light');
   if (currentTheme === 'light') document.body.classList.add('light');
   else if (currentTheme === 'auto') {
-    const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    if (!isDark) document.body.classList.add('light');
+    if (!window.matchMedia('(prefers-color-scheme: dark)').matches) document.body.classList.add('light');
   }
   const root = document.documentElement;
   if (currentFontSize === 'small') root.style.fontSize = '12px';
@@ -480,16 +473,13 @@ function applySettings() {
   if (compactMode) document.body.classList.add('compact');
   else document.body.classList.remove('compact');
   document.querySelectorAll('.interval-btn').forEach(btn => {
-    if (parseInt(btn.textContent) === refreshSec) btn.classList.add('active');
-    else btn.classList.remove('active');
+    btn.classList.toggle('active', parseInt(btn.textContent) === refreshSec);
   });
   document.querySelectorAll('.theme-btn').forEach(btn => {
-    if (btn.textContent.toLowerCase() === currentTheme) btn.classList.add('active');
-    else btn.classList.remove('active');
+    btn.classList.toggle('active', btn.textContent.toLowerCase() === currentTheme);
   });
   document.querySelectorAll('.font-btn').forEach(btn => {
-    if (btn.textContent.toLowerCase() === currentFontSize) btn.classList.add('active');
-    else btn.classList.remove('active');
+    btn.classList.toggle('active', btn.textContent.toLowerCase() === currentFontSize);
   });
   document.getElementById('compactToggle').className = 'toggle' + (compactMode ? ' on' : '');
   document.getElementById('fvOnlyToggle').className = 'toggle' + (fvOnlyAlerts ? ' on' : '');
@@ -497,107 +487,51 @@ function applySettings() {
   document.getElementById('badgeToggle').className = 'toggle' + (showChannelBadge ? ' on' : '');
   document.getElementById('rrToggle').className = 'toggle' + (showRR ? ' on' : '');
   const bar = document.getElementById('refreshBar');
-  bar.style.animation = 'none';
-  bar.offsetHeight;
+  bar.style.animation = 'none'; bar.offsetHeight;
   bar.style.animation = `shrink ${refreshSec}s linear infinite`;
 }
 
 function setRefreshInterval(sec) {
-  refreshSec = sec;
-  saveSettings();
-  applySettings();
+  refreshSec = sec; saveSettings(); applySettings();
   if (refreshInterval) clearInterval(refreshInterval);
   refreshInterval = setInterval(fetchAll, refreshSec * 1000);
-  showToast(`Refresh interval set to ${sec} seconds`, 'gold');
+  showToast(`Refresh: ${sec}s`, 'gold');
 }
-
-function setTheme(theme) {
-  currentTheme = theme;
-  saveSettings();
-  applySettings();
-  showToast(`${theme.charAt(0).toUpperCase() + theme.slice(1)} theme applied`);
-}
-
-function setFontSize(size) {
-  currentFontSize = size;
-  saveSettings();
-  applySettings();
-  showToast(`Font size: ${size}`);
-}
-
+function setTheme(t) { currentTheme = t; saveSettings(); applySettings(); showToast(t + ' theme'); }
+function setFontSize(s) { currentFontSize = s; saveSettings(); applySettings(); showToast('Font: ' + s); }
 function toggleCompactMode() {
-  compactMode = !compactMode;
-  saveSettings();
-  applySettings();
+  compactMode = !compactMode; saveSettings(); applySettings();
   allSignals.forEach((sigs, i) => renderChannelPage(i, sigs, []));
-  renderLivePage();
-  renderStarredPage();
-  renderHistory();
-  showToast(compactMode ? 'Compact Mode ON' : 'Compact Mode OFF');
+  renderLivePage(); renderStarredPage(); renderHistory();
+  showToast(compactMode ? 'Compact ON' : 'Compact OFF');
 }
-
-function toggleFVOnly() {
-  fvOnlyAlerts = !fvOnlyAlerts;
-  saveSettings();
-  applySettings();
-  showToast(fvOnlyAlerts ? 'Alerts: Only FV Symbols' : 'Alerts: All Symbols');
-}
-
-function testSound() {
-  playBeep('tp');
-  showToast('🔊 Test sound playing');
-}
-
+function toggleFVOnly() { fvOnlyAlerts = !fvOnlyAlerts; saveSettings(); applySettings(); showToast(fvOnlyAlerts ? 'FV Only Alerts ON' : 'All Alerts ON'); }
+function testSound() { playBeep('tp'); showToast('🔊 Test sound'); }
 function testNotification() {
-  if (Notification.permission === 'granted') {
-    new Notification('Test Notification', { body: 'This is a test alert from TradeSignal Pro' });
-    showToast('✅ Test notification sent');
-  } else {
-    showToast('Please enable notifications first', 'red');
-  }
+  if (Notification.permission === 'granted') { new Notification('Test', { body: 'TradeSignal Pro test alert' }); showToast('✅ Test sent'); }
+  else showToast('Enable notifications first', 'red');
 }
-
 function clearHistory() {
-  if (confirm('Are you sure you want to clear all trade history?')) {
-    allSignals.forEach((sigs, i) => {
-      allSignals[i] = sigs.filter(s => !s.hitType);
-    });
-    renderLivePage();
-    renderStarredPage();
-    renderHistory();
+  if (confirm('Clear all trade history?')) {
+    allSignals.forEach((_, i) => { allSignals[i] = allSignals[i].filter(s => !s.hitType); });
+    saveSignals(); renderLivePage(); renderStarredPage(); renderHistory(); updateDataStats();
     showToast('History cleared');
   }
 }
-
 function resetAllSettings() {
-  if (confirm('Reset all settings to default?')) {
-    soundOn = true;
-    showChannelBadge = true;
-    showRR = true;
-    refreshSec = 10;
-    currentTheme = 'dark';
-    currentFontSize = 'medium';
-    compactMode = false;
-    fvOnlyAlerts = false;
-    saveSettings();
-    applySettings();
+  if (confirm('Reset all settings?')) {
+    soundOn=true; showChannelBadge=true; showRR=true; refreshSec=10;
+    currentTheme='dark'; currentFontSize='medium'; compactMode=false; fvOnlyAlerts=false;
+    saveSettings(); applySettings();
     if (refreshInterval) clearInterval(refreshInterval);
     refreshInterval = setInterval(fetchAll, refreshSec * 1000);
-    showToast('All settings reset to default');
+    showToast('Settings reset');
   }
 }
-
-function checkForUpdates() {
-  showToast('You are on latest version v3.2', 'gold');
-}
-
+function checkForUpdates() { showToast('Latest version v3.3', 'gold'); }
 function updateDataStats() {
-  let total = 0, open = 0, closed = 0;
-  allSignals.forEach(sigs => {
-    total += sigs.length;
-    open += sigs.filter(s => !s.hitType).length;
-    closed += sigs.filter(s => s.hitType).length;
-  });
+  let total=0, open=0, closed=0;
+  allSignals.forEach(sigs => { total+=sigs.length; open+=sigs.filter(s=>!s.hitType).length; closed+=sigs.filter(s=>s.hitType).length; });
   document.getElementById('totalSignalsCount').textContent = total;
   document.getElementById('openTradesCount').textContent = open;
   document.getElementById('closedTradesCount').textContent = closed;
@@ -605,65 +539,40 @@ function updateDataStats() {
 
 // ── FV SYMBOL SET ─────────────────────────────────────────────────────────────
 function loadFvSet() {
-  try {
-    return new Set(JSON.parse(localStorage.getItem(LS_FV_KEY) || '[]'));
-  } catch (e) {
-    return new Set();
-  }
+  try { return new Set(JSON.parse(localStorage.getItem(LS_FV_KEY) || '[]')); } catch(e) { return new Set(); }
 }
-function saveFvSet() {
-  try {
-    localStorage.setItem(LS_FV_KEY, JSON.stringify([...fvSymbols]));
-  } catch (e) {}
-}
+function saveFvSet() { try { localStorage.setItem(LS_FV_KEY, JSON.stringify([...fvSymbols])); } catch(e) {} }
 let fvSymbols = loadFvSet();
 
 function toggleFvSymbol(sym, event) {
   if (event) event.stopPropagation();
   const s = sym.toUpperCase();
-  if (fvSymbols.has(s)) {
-    fvSymbols.delete(s);
-    saveFvSet();
-    showToast('Removed: ' + s, 'red');
-  } else {
-    fvSymbols.add(s);
-    saveFvSet();
-    showToast('⭐ FV Added: ' + s, 'gold');
-  }
+  if (fvSymbols.has(s)) { fvSymbols.delete(s); saveFvSet(); showToast('Removed: ' + s, 'red'); }
+  else { fvSymbols.add(s); saveFvSet(); showToast('⭐ FV Added: ' + s, 'gold'); }
   updateFvStarCount();
   allSignals.forEach((sigs, i) => renderChannelPage(i, sigs, []));
-  renderLivePage();
-  renderStarredPage();
+  renderLivePage(); renderStarredPage();
 }
-
 function clearAllFvSymbols() {
-  fvSymbols.clear();
-  saveFvSet();
-  showToast('⭐ FV list cleared');
+  fvSymbols.clear(); saveFvSet(); showToast('⭐ FV list cleared');
   updateFvStarCount();
   allSignals.forEach((sigs, i) => renderChannelPage(i, sigs, []));
-  renderLivePage();
-  renderStarredPage();
+  renderLivePage(); renderStarredPage();
 }
-
 function updateFvStarCount() {
   const n = fvSymbols.size;
   const el = document.getElementById('navStarCount');
-  if (el) {
-    el.textContent = n;
-    el.className = 'nav-star-count' + (n > 0 ? ' show' : '');
-  }
+  if (el) { el.textContent = n; el.className = 'nav-star-count' + (n > 0 ? ' show' : ''); }
   document.getElementById('cnt4').textContent = n || '0';
 }
 
-// ── HAPTIC & AUDIO ───────────────────────────────────────────────────────────
+// ── HAPTIC & AUDIO ────────────────────────────────────────────────────────────
 function vibrate(type) {
   if (!navigator.vibrate) return;
-  if (type === 'tp') navigator.vibrate([100, 50, 100, 50, 300]);
-  else if (type === 'sl') navigator.vibrate([300, 100, 300]);
-  else navigator.vibrate([100, 50, 100]);
+  if (type === 'tp') navigator.vibrate([100,50,100,50,300]);
+  else if (type === 'sl') navigator.vibrate([300,100,300]);
+  else navigator.vibrate([100,50,100]);
 }
-
 const AudioCtx = window.AudioContext || window.webkitAudioContext;
 let audioCtx = null;
 function unlockAudio() {
@@ -672,7 +581,6 @@ function unlockAudio() {
 }
 document.addEventListener('touchstart', unlockAudio, { once: true });
 document.addEventListener('click', unlockAudio, { once: true });
-
 function playBeep(type) {
   vibrate(type);
   if (!soundOn) return;
@@ -680,109 +588,66 @@ function playBeep(type) {
     if (!audioCtx) audioCtx = new AudioCtx();
     if (audioCtx.state === 'suspended') audioCtx.resume();
     const t = audioCtx.currentTime;
-    function beep(freq, start, dur, vol = 0.4) {
+    function beep(freq, start, dur, vol=0.4) {
       const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-      o.connect(g);
-      g.connect(audioCtx.destination);
-      o.frequency.setValueAtTime(freq, t + start);
-      g.gain.setValueAtTime(vol, t + start);
-      g.gain.exponentialRampToValueAtTime(0.001, t + start + dur);
-      o.start(t + start);
-      o.stop(t + start + dur);
+      o.connect(g); g.connect(audioCtx.destination);
+      o.frequency.setValueAtTime(freq, t+start);
+      g.gain.setValueAtTime(vol, t+start);
+      g.gain.exponentialRampToValueAtTime(0.001, t+start+dur);
+      o.start(t+start); o.stop(t+start+dur);
     }
-    if (type === 'tp') {
-      beep(660, 0.00, 0.15);
-      beep(880, 0.20, 0.15);
-      beep(1100, 0.40, 0.25);
-    } else if (type === 'sl') {
-      beep(440, 0.00, 0.18);
-      beep(330, 0.25, 0.18);
-      beep(220, 0.50, 0.25);
-    } else {
-      beep(880, 0.00, 0.10);
-      beep(880, 0.15, 0.10);
-      beep(1100, 0.30, 0.15);
-    }
-  } catch (e) {}
+    if (type === 'tp') { beep(660,0,0.15); beep(880,0.2,0.15); beep(1100,0.4,0.25); }
+    else if (type === 'sl') { beep(440,0,0.18); beep(330,0.25,0.18); beep(220,0.5,0.25); }
+    else { beep(880,0,0.1); beep(880,0.15,0.1); beep(1100,0.3,0.15); }
+  } catch(e) {}
 }
-
-function toggleSound() {
-  soundOn = !soundOn;
-  saveSettings();
-  applySettings();
-  showToast(soundOn ? 'SOUND ON' : 'SOUND OFF');
-}
-
+function toggleSound() { soundOn = !soundOn; saveSettings(); applySettings(); showToast(soundOn ? 'SOUND ON' : 'SOUND OFF'); }
 function toggleChannelBadge() {
-  showChannelBadge = !showChannelBadge;
-  saveSettings();
-  applySettings();
-  allSignals.forEach((sigs, i) => renderChannelPage(i, sigs, []));
-  renderLivePage();
-  renderStarredPage();
-  renderHistory();
+  showChannelBadge = !showChannelBadge; saveSettings(); applySettings();
+  allSignals.forEach((sigs,i) => renderChannelPage(i,sigs,[]));
+  renderLivePage(); renderStarredPage(); renderHistory();
   showToast(showChannelBadge ? 'Channel Badge ON' : 'Channel Badge OFF');
 }
-
 function toggleRR() {
-  showRR = !showRR;
-  saveSettings();
-  applySettings();
-  allSignals.forEach((sigs, i) => renderChannelPage(i, sigs, []));
-  renderLivePage();
-  renderStarredPage();
-  renderHistory();
-  showToast(showRR ? 'R:R Ratio ON' : 'R:R Ratio OFF');
+  showRR = !showRR; saveSettings(); applySettings();
+  allSignals.forEach((sigs,i) => renderChannelPage(i,sigs,[]));
+  renderLivePage(); renderStarredPage(); renderHistory();
+  showToast(showRR ? 'R:R ON' : 'R:R OFF');
 }
-
 function toggleTPAlert() {
   const toggle = document.getElementById('tpAlertToggle');
   const isOn = toggle.classList.contains('on');
-  if (isOn) {
-    toggle.classList.remove('on');
-    showToast('TP/SL Alerts OFF');
-  } else {
-    toggle.classList.add('on');
-    showToast('TP/SL Alerts ON');
-  }
+  toggle.classList.toggle('on', !isOn);
+  showToast(isOn ? 'TP/SL Alerts OFF' : 'TP/SL Alerts ON');
 }
 
-// ── NOTIFICATIONS ────────────────────────────────────────────────────────────
+// ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
 let swReg = null;
 async function registerSW() {
   if (!('serviceWorker' in navigator)) return;
-  try {
-    swReg = await navigator.serviceWorker.register('/sw.js');
-  } catch (e) {}
+  try { swReg = await navigator.serviceWorker.register('/sw.js'); } catch(e) {}
 }
-
 async function requestNotificationPermission() {
   if (!('Notification' in window)) return false;
   if (Notification.permission === 'granted') return true;
   if (Notification.permission === 'denied') return false;
   return (await Notification.requestPermission()) === 'granted';
 }
-
 function sendNotification(alertType, pair, pnl, dir, entry) {
   if (Notification.permission !== 'granted') return;
-  if (swReg && swReg.active) {
-    swReg.active.postMessage({ type: 'SHOW_NOTIFICATION', alertType, pair, pnl, dir, entry });
-    return;
-  }
   let title, body;
   if (alertType === 'tp') {
     title = '🎯 TP HIT — ' + (pair || '');
-    body = '+' + (pnl || '') + ' USD · Take Profit reached!';
+    body = (pnl != null ? '+$' + Math.abs(pnl).toFixed(2) + ' Profit' : 'Take Profit reached!');
   } else if (alertType === 'sl') {
     title = '❌ SL HIT — ' + (pair || '');
-    body = (pnl || '') + ' USD · Stop Loss triggered';
+    body = (pnl != null ? '-$' + Math.abs(pnl).toFixed(2) + ' Loss' : 'Stop Loss triggered');
   } else {
     title = '📡 New Signal — ' + (pair || '');
     body = (dir ? dir.toUpperCase() : '') + ' · Entry: ' + (entry || '');
   }
-  new Notification(title, { body, icon: '/icon-192.png', badge: '/icon-192.png' });
+  try { new Notification(title, { body, icon: '/icon-192.png', badge: '/icon-192.png' }); } catch(e) {}
 }
-
 function enableNotifications() {
   requestNotificationPermission().then(granted => {
     if (granted) {
@@ -790,9 +655,7 @@ function enableNotifications() {
       document.getElementById('notifStatus').textContent = 'ENABLED';
       document.getElementById('notifStatus').style.color = 'var(--green)';
       document.getElementById('notifToggle').classList.add('on');
-    } else {
-      showToast('Notification allow karo browser settings mein', 'red');
-    }
+    } else showToast('Browser settings mein allow karo', 'red');
   });
 }
 
@@ -804,7 +667,7 @@ function addBellAlert(type, text, pair, ts, pnl, dir, entry) {
   const aid = ts + '_' + type + '_' + (pair || '');
   if (seenAlertIds.has(aid)) return;
   seenAlertIds.add(aid);
-  bellAlerts.unshift({ type, text, pair, ts });
+  bellAlerts.unshift({ type, text, pair, ts, pnl });
   if (bellAlerts.length > 50) bellAlerts.pop();
   playBeep(type);
   sendNotification(type, pair, pnl, dir, entry);
@@ -813,48 +676,87 @@ function addBellAlert(type, text, pair, ts, pnl, dir, entry) {
   const btn = document.getElementById('bellBtn');
   btn.classList.add('bell-active');
   setTimeout(() => btn.classList.remove('bell-active'), 600);
-  showToast((type === 'tp' ? '🎯 TP HIT' : '❌ SL HIT') + (pair ? ' · ' + pair : ''), type === 'tp' ? 'gold' : 'red');
+  // Toast with actual USD amount
+  let toastMsg = '';
+  if (type === 'tp') {
+    toastMsg = '🎯 TP HIT' + (pair ? ' · ' + pair : '') + (pnl != null ? ' · +$' + Math.abs(pnl).toFixed(2) : '');
+  } else {
+    toastMsg = '❌ SL HIT' + (pair ? ' · ' + pair : '') + (pnl != null ? ' · -$' + Math.abs(pnl).toFixed(2) : '');
+  }
+  showToast(toastMsg, type === 'tp' ? 'gold' : 'red');
   renderBellPanel();
 }
-
 function updateBellBadge() {
   const b = document.getElementById('bellBadge');
   b.textContent = bellUnread > 99 ? '99+' : bellUnread;
   b.className = 'bell-badge' + (bellUnread > 0 ? ' show' : '');
 }
-
 function toggleBellPanel() {
   bellPanelOpen = !bellPanelOpen;
   document.getElementById('bellPanel').className = 'bell-panel' + (bellPanelOpen ? ' open' : '');
-  if (bellPanelOpen) {
-    bellUnread = 0;
-    updateBellBadge();
-  }
+  if (bellPanelOpen) { bellUnread = 0; updateBellBadge(); }
 }
-
-function clearBellAlerts() {
-  bellAlerts = [];
-  bellUnread = 0;
-  updateBellBadge();
-  renderBellPanel();
-}
-
+function clearBellAlerts() { bellAlerts = []; bellUnread = 0; updateBellBadge(); renderBellPanel(); }
 function renderBellPanel() {
   const list = document.getElementById('bellList');
-  if (!bellAlerts.length) {
-    list.innerHTML = '<div class="bell-empty">// NO ALERTS YET</div>';
-    return;
-  }
-  list.innerHTML = bellAlerts.map(a => `<div class="bell-item"><div class="bell-item-icon">${a.type === 'tp' ? '🎯' : '❌'}</div><div class="bell-item-body"><div class="bell-item-title ${a.type}">${a.type === 'tp' ? 'TP HIT' : 'SL HIT'}${a.pair ? ' · ' + a.pair : ''}</div><div class="bell-item-sub">${timeAgo(a.ts)} · ${fmtTime(a.ts)}</div></div></div>`).join('');
+  if (!bellAlerts.length) { list.innerHTML = '<div class="bell-empty">// NO ALERTS YET</div>'; return; }
+  list.innerHTML = bellAlerts.map(a => {
+    const pnlStr = a.pnl != null
+      ? (a.type === 'tp' ? ` · <span style="color:var(--green)">+$${Math.abs(a.pnl).toFixed(2)}</span>` : ` · <span style="color:var(--red)">-$${Math.abs(a.pnl).toFixed(2)}</span>`)
+      : '';
+    return `<div class="bell-item">
+      <div class="bell-item-icon">${a.type === 'tp' ? '🎯' : '❌'}</div>
+      <div class="bell-item-body">
+        <div class="bell-item-title ${a.type}">${a.type === 'tp' ? 'TP HIT' : 'SL HIT'}${a.pair ? ' · ' + a.pair : ''}${pnlStr}</div>
+        <div class="bell-item-sub">${timeAgo(a.ts)} · ${fmtTime(a.ts)}</div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 // ── PARSE ─────────────────────────────────────────────────────────────────────
+
+/**
+ * parseTPSL — detects TP/SL hit and extracts profit/loss USD amount
+ * Handles messages like:
+ *   "🟢 TP HIT : XAUUSD\nProfit : +$42.06"
+ *   "❌ SL HIT : EURUSD\nLoss : -$20.00"
+ *   "TP1 HIT · profit +50 USD"
+ */
 function parseTPSL(text) {
   if (!text) return null;
   const t = text.toUpperCase();
-  if (/TP\s*[12]?\s*(HIT|REACHED|DONE)|TARGET\s*(HIT|REACHED)|🎯/.test(t)) return 'tp';
-  if (/SL\s*(HIT|REACHED|TRIGGERED)|STOP\s*LOSS\s*(HIT|TRIGGERED)|STOPPED\s*OUT|❌/.test(t)) return 'sl';
-  return null;
+
+  // Detect type
+  let type = null;
+  if (/TP\s*[12]?\s*(HIT|REACHED|DONE)|TARGET\s*(HIT|REACHED)|🎯/.test(t)) type = 'tp';
+  else if (/SL\s*(HIT|REACHED|TRIGGERED)|STOP\s*LOSS\s*(HIT|TRIGGERED)|STOPPED\s*OUT|❌/.test(t)) type = 'sl';
+  if (!type) return null;
+
+  // Extract USD amount — supports: +$42.06  -$20  +42.06 USD  Profit: 42.06  Loss: -20
+  let pnl = null;
+  const pnlPatterns = [
+    /(?:profit|loss|pnl)\s*[:\-]?\s*[+\-]?\s*\$?\s*([0-9]+(?:\.[0-9]+)?)/i,
+    /[+\-]\s*\$\s*([0-9]+(?:\.[0-9]+)?)/,
+    /\$\s*([0-9]+(?:\.[0-9]+)?)/,
+    /([0-9]+(?:\.[0-9]+)?)\s*USD/i,
+  ];
+  for (const pat of pnlPatterns) {
+    const m = text.match(pat);
+    if (m) {
+      pnl = parseFloat(m[1]);
+      // Check sign: if original text has minus before the number, make it negative
+      const rawMatch = m[0];
+      if (/[-]/.test(rawMatch.replace(/[0-9.]/g, '').replace('USD','').replace('usd','').replace('$','').replace('profit','').replace('Profit',''))) {
+        pnl = -Math.abs(pnl);
+      }
+      break;
+    }
+  }
+  // For SL hits, pnl should be negative
+  if (type === 'sl' && pnl != null && pnl > 0) pnl = -pnl;
+
+  return { type, pnl };
 }
 
 function parseSignal(text) {
@@ -879,6 +781,20 @@ function parseSignal(text) {
   return { dir, pair, entry, sl, tp, rr };
 }
 
+/**
+ * extractPairFromTPSL — extract symbol from TP/SL message
+ * Handles: "TP HIT : XAUUSD" or "SL HIT: EURUSD"
+ */
+function extractPairFromTPSL(text) {
+  if (!text) return null;
+  // Pattern: TP HIT : XAUUSD or SL HIT : EURUSD
+  const m = text.match(/(?:TP|SL)\s*(?:HIT|REACHED|TRIGGERED)\s*[:\-·]\s*([A-Z]{6})/i);
+  if (m) return m[1].toUpperCase();
+  // Fallback: any 6-letter word
+  const m2 = text.match(/\b([A-Z]{3}[\/\.]?[A-Z]{3})\b/i) || text.match(/\b([A-Z]{6})\b/);
+  return m2 ? m2[1].toUpperCase().replace(/[\/\.]/g,'') : null;
+}
+
 function timeAgo(unix) {
   const m = Math.floor((Date.now() - unix * 1000) / 60000);
   if (m < 1) return 'Just now';
@@ -887,12 +803,11 @@ function timeAgo(unix) {
   if (h < 24) return h + ' hr ago';
   return Math.floor(h / 24) + 'd ago';
 }
-
 function fmtTime(unix) {
-  return new Date(unix * 1000).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+  return new Date(unix * 1000).toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit' });
 }
 
-// ── RENDER FUNCTIONS ─────────────────────────────────────────────────────────
+// ── RENDER FUNCTIONS ──────────────────────────────────────────────────────────
 function renderCard(s, showCh, histMode, showFvBtn = true) {
   const id = 'c' + (_uid++);
   const isFvSym = s.pair && fvSymbols.has(s.pair.toUpperCase());
@@ -901,40 +816,40 @@ function renderCard(s, showCh, histMode, showFvBtn = true) {
   const newPill = s.isNew && !histMode ? '<span class="new-pill">NEW</span>' : '';
   const chBadge = showCh && showChannelBadge && s.ch ? `<span class="ch-badge">${s.ch}</span>` : '';
   const fvBtnHtml = showFvBtn && s.pair
-    ? `<button class="fv-btn${isFvSym ? ' active' : ''}" onclick="toggleFvSymbol('${s.pair}',event)">${isFvSym ? '⭐' : '☆'}</button>`
-    : '';
+    ? `<button class="fv-btn${isFvSym?' active':''}" onclick="toggleFvSymbol('${s.pair}',event)">${isFvSym?'⭐':'☆'}</button>` : '';
   let statusBadge = '', hitBanner = '', hitCls = '';
   if (s.hitType === 'tp') {
-    const amt = s.pnl != null ? ` +${s.pnl} USD` : '';
-    statusBadge = `<span class="hit-badge win">✅ TP HIT${amt}</span>`;
-    hitBanner = '<div class="hit-banner tp">🎯 TAKE PROFIT HIT</div>';
+    const amtStr = s.pnl != null ? ` +$${Math.abs(s.pnl).toFixed(2)}` : '';
+    statusBadge = `<span class="hit-badge win">✅ TP HIT${amtStr}</span>`;
+    const bannerAmt = s.pnl != null ? ` · +$${Math.abs(s.pnl).toFixed(2)}` : '';
+    hitBanner = `<div class="hit-banner tp">🎯 TAKE PROFIT HIT${bannerAmt}</div>`;
     hitCls = 'tp-hit';
   } else if (s.hitType === 'sl') {
-    const amt = s.pnl != null ? ` ${s.pnl} USD` : '';
-    statusBadge = `<span class="hit-badge loss">❌ SL HIT${amt}</span>`;
-    hitBanner = '<div class="hit-banner sl">❌ STOP LOSS HIT</div>';
+    const amtStr = s.pnl != null ? ` -$${Math.abs(s.pnl).toFixed(2)}` : '';
+    statusBadge = `<span class="hit-badge loss">❌ SL HIT${amtStr}</span>`;
+    const bannerAmt = s.pnl != null ? ` · -$${Math.abs(s.pnl).toFixed(2)}` : '';
+    hitBanner = `<div class="hit-banner sl">❌ STOP LOSS HIT${bannerAmt}</div>`;
     hitCls = 'sl-hit';
   } else if (histMode) {
     statusBadge = '<span class="hit-badge open">OPEN</span>';
   }
-  const newCls = s.isNew && !histMode ? 'new-signal' : '';
   const fvCls = isFvSym ? 'fv-sym' : '';
   const rrDisplay = (s.rr && showRR) ? s.rr : '—';
-  return `<div class="sig-card ${s.dir || ''} ${newCls} ${hitCls} ${fvCls}" id="${id}" onclick="toggleCard('${id}')">
+  return `<div class="sig-card ${s.dir||''} ${hitCls} ${fvCls}" id="${id}" onclick="toggleCard('${id}')">
   ${hitBanner}
   <div class="card-collapsed">
     <div class="card-top">
       <div class="card-dir-pair">
         <span class="card-emoji">${emoji}</span>
         <span class="card-dir ${s.dir}">${dirL}</span>
-        <span class="card-pair">${s.pair || '——'}</span>
+        <span class="card-pair">${s.pair||'——'}</span>
       </div>
       <div class="card-right">${newPill}${chBadge}${statusBadge}${fvBtnHtml}<span class="expand-arrow">▼</span></div>
     </div>
     <div class="card-price-grid">
-      <div class="cpg-cell"><div class="cpg-label">ENTRY</div><div class="cpg-val">${s.entry || '—'}</div></div>
-      <div class="cpg-cell"><div class="cpg-label">SL</div><div class="cpg-val">${s.sl || '—'}</div></div>
-      <div class="cpg-cell"><div class="cpg-label">TP</div><div class="cpg-val">${s.tp || '—'}</div></div>
+      <div class="cpg-cell"><div class="cpg-label">ENTRY</div><div class="cpg-val">${s.entry||'—'}</div></div>
+      <div class="cpg-cell"><div class="cpg-label">SL</div><div class="cpg-val">${s.sl||'—'}</div></div>
+      <div class="cpg-cell"><div class="cpg-label">TP</div><div class="cpg-val">${s.tp||'—'}</div></div>
       <div class="cpg-cell"><div class="cpg-label">R:R</div><div class="cpg-val">${rrDisplay}</div></div>
     </div>
     <div class="card-time-row">
@@ -945,11 +860,11 @@ function renderCard(s, showCh, histMode, showFvBtn = true) {
   <div class="card-expanded-body">
     <div class="tg-body">
       <div class="tg-row"><span class="tg-label">Direction</span><span class="tg-val ${s.dir}">${dirL}</span></div>
-      <div class="tg-row"><span class="tg-label">Entry</span><span class="tg-val">${s.entry || '—'}</span></div>
-      <div class="tg-row"><span class="tg-label">SL</span><span class="tg-val sl-c">${s.sl || '—'}</span></div>
-      <div class="tg-row"><span class="tg-label">TP</span><span class="tg-val tp-c">${s.tp || '—'}</span></div>
+      <div class="tg-row"><span class="tg-label">Entry</span><span class="tg-val">${s.entry||'—'}</span></div>
+      <div class="tg-row"><span class="tg-label">SL</span><span class="tg-val sl-c">${s.sl||'—'}</span></div>
+      <div class="tg-row"><span class="tg-label">TP</span><span class="tg-val tp-c">${s.tp||'—'}</span></div>
       ${s.rr && showRR ? `<div class="tg-row"><span class="tg-label">R:R</span><span class="tg-val">${s.rr}</span></div>` : ''}
-      ${s.pnl != null ? `<div class="tg-row"><span class="tg-label">PnL</span><span class="tg-val ${s.pnl >= 0 ? 'tp-c' : 'sl-c'}">${s.pnl >= 0 ? '+' : ''}${s.pnl} USD</span></div>` : ''}
+      ${s.pnl != null ? `<div class="tg-row"><span class="tg-label">PnL</span><span class="tg-val ${s.pnl>=0?'tp-c':'sl-c'}">${s.pnl>=0?'+$':'-$'}${Math.abs(s.pnl).toFixed(2)}</span></div>` : ''}
     </div>
     <div class="tg-footer">
       <span class="tg-time">🕐 <span class="rel-t" data-ts="${s.ts}">${timeAgo(s.ts)}</span> · ${fmtTime(s.ts)}</span>
@@ -959,58 +874,41 @@ function renderCard(s, showCh, histMode, showFvBtn = true) {
 </div>`;
 }
 
-function toggleCard(id) {
-  const el = document.getElementById(id);
-  if (el) el.classList.toggle('expanded');
-}
+function toggleCard(id) { const el=document.getElementById(id); if(el) el.classList.toggle('expanded'); }
 
 function statsRow(sigs) {
-  const b = sigs.filter(s => s.dir === 'buy').length, sl = sigs.filter(s => s.dir === 'sell').length;
+  const b=sigs.filter(s=>s.dir==='buy').length, sl=sigs.filter(s=>s.dir==='sell').length;
   return `<div class="stats-row"><div class="stat"><div class="stat-n">${sigs.length}</div><div class="stat-l">TOTAL</div></div><div class="stat"><div class="stat-n green">${b}</div><div class="stat-l">BUY</div></div><div class="stat"><div class="stat-n red">${sl}</div><div class="stat-l">SELL</div></div></div>`;
 }
 
 function getWeekRange() {
-  const now = new Date(), day = now.getDay();
-  const mon = new Date(now);
-  mon.setDate(now.getDate() - (day === 0 ? 6 : day - 1));
-  const sun = new Date(mon);
-  sun.setDate(mon.getDate() + 6);
-  const f = d => d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
-  return f(mon) + ' – ' + f(sun);
+  const now=new Date(), day=now.getDay();
+  const mon=new Date(now); mon.setDate(now.getDate()-(day===0?6:day-1));
+  const sun=new Date(mon); sun.setDate(mon.getDate()+6);
+  const f=d=>d.toLocaleDateString('en-IN',{day:'2-digit',month:'short'});
+  return f(mon)+' – '+f(sun);
 }
-
 function getNextSunday() {
-  const now = new Date(), diff = (7 - now.getDay()) % 7 || 7;
-  const n = new Date(now);
-  n.setDate(now.getDate() + diff);
-  return n.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+  const now=new Date(), diff=(7-now.getDay())%7||7;
+  const n=new Date(now); n.setDate(now.getDate()+diff);
+  return n.toLocaleDateString('en-IN',{day:'2-digit',month:'short'});
 }
 
 function renderStarredPage() {
   const all = [];
-  allSignals.forEach((sigs, ci) => sigs.forEach(s => all.push({ ...s, ch: CH_LABELS[ci] })));
+  allSignals.forEach((sigs,ci) => sigs.forEach(s => all.push({...s, ch:CH_LABELS[ci]})));
   let html = '';
   if (fvSymbols.size === 0) {
-    html = `<div class="empty-state"><div class="empty-icon">⭐</div><div class="empty-text">KOI FV SYMBOL NAHI<br>Kisi bhi signal card pe ☆ tap karo<br>us symbol ke sab signals yahan dikhe</div></div>`;
+    html = `<div class="empty-state"><div class="empty-icon">⭐</div><div class="empty-text">KOI FV SYMBOL NAHI<br>Kisi bhi signal card pe ☆ tap karo</div></div>`;
   } else {
     [...fvSymbols].sort().forEach(sym => {
-      const symSigs = all.filter(s => (s.pair || '').toUpperCase() === sym);
-      const openSigs = symSigs.filter(s => !s.hitType);
-      const closedSigs = symSigs.filter(s => s.hitType);
-      openSigs.sort((a, b) => (b.ts || 0) - (a.ts || 0));
-      closedSigs.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+      const symSigs = all.filter(s => (s.pair||'').toUpperCase() === sym);
+      const openSigs = symSigs.filter(s => !s.hitType).sort((a,b) => b.ts-a.ts);
+      const closedSigs = symSigs.filter(s => s.hitType).sort((a,b) => b.ts-a.ts);
       html += `<div class="sym-group"><div class="sym-group-hdr"><span class="sym-group-name">${sym}</span><div class="sym-group-meta"><span class="sym-group-count">${openSigs.length} OPEN · ${closedSigs.length} CLOSED</span><span class="sym-unstar-btn" onclick="toggleFvSymbol('${sym}',event)">✕ UNSTAR</span></div></div><div class="sym-group-body">`;
-      if (openSigs.length) {
-        html += `<div class="section-hdr" style="margin-top:2px">OPEN (${openSigs.length})</div>`;
-        openSigs.forEach(s => { html += renderCard(s, true, false, false); });
-      }
-      if (closedSigs.length) {
-        html += `<div class="section-hdr dim">CLOSED (${closedSigs.length})</div>`;
-        closedSigs.forEach(s => { html += renderCard(s, true, true, false); });
-      }
-      if (!symSigs.length) {
-        html += `<div style="font-family:var(--mono);font-size:10px;color:var(--text3);text-align:center;padding:16px 0;">No signals yet for ${sym}</div>`;
-      }
+      if (openSigs.length) { html += `<div class="section-hdr" style="margin-top:2px">OPEN (${openSigs.length})</div>`; openSigs.forEach(s=>{html+=renderCard(s,true,false,false);}); }
+      if (closedSigs.length) { html += `<div class="section-hdr dim">CLOSED (${closedSigs.length})</div>`; closedSigs.forEach(s=>{html+=renderCard(s,true,true,false);}); }
+      if (!symSigs.length) html += `<div style="font-family:var(--mono);font-size:10px;color:var(--text3);text-align:center;padding:16px 0;">No signals yet for ${sym}</div>`;
       html += `</div></div>`;
     });
   }
@@ -1028,16 +926,16 @@ function renderChannelPage(chIdx, signals, raws) {
   openSigs.forEach(s => { html += renderCard(s, false, false, true); });
   if (raws.length) {
     html += `<div style="font-family:var(--mono);font-size:9px;color:var(--text3);letter-spacing:2px;margin:12px 0 8px;">// OTHER MESSAGES</div>`;
-    raws.forEach(r => { html += `<div class="raw-card"><div class="raw-text">${r.text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div><div class="raw-time">🕐 ${fmtTime(r.ts)}</div></div>`; });
+    raws.forEach(r => { html += `<div class="raw-card"><div class="raw-text">${r.text.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div><div class="raw-time">🕐 ${fmtTime(r.ts)}</div></div>`; });
   }
   page.innerHTML = html;
 }
 
 function renderLivePage() {
   const all = [];
-  allSignals.forEach((sigs, ci) => { sigs.forEach(s => all.push({ ...s, ch: CH_LABELS[ci] })); });
+  allSignals.forEach((sigs,ci) => sigs.forEach(s => all.push({...s, ch:CH_LABELS[ci]})));
   const open = all.filter(s => !s.hitType);
-  open.sort((a, b) => { if (a.isNew && !b.isNew) return -1; if (!a.isNew && b.isNew) return 1; return (b.ts || 0) - (a.ts || 0); });
+  open.sort((a,b) => { if(a.isNew&&!b.isNew) return -1; if(!a.isNew&&b.isNew) return 1; return b.ts-a.ts; });
   document.getElementById('cnt0').textContent = open.length || '0';
   let html = statsRow(open);
   if (!open.length) html += `<div class="empty-state"><div class="empty-icon">📡</div><div class="empty-text">NO ACTIVE SIGNALS</div></div>`;
@@ -1047,13 +945,13 @@ function renderLivePage() {
 
 function renderHistory() {
   const all = [];
-  allSignals.forEach((sigs, ci) => { sigs.forEach(s => all.push({ ...s, ch: CH_LABELS[ci] })); });
+  allSignals.forEach((sigs,ci) => sigs.forEach(s => all.push({...s, ch:CH_LABELS[ci]})));
   const closed = all.filter(s => s.hitType === 'tp' || s.hitType === 'sl');
-  closed.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  closed.sort((a,b) => b.ts-a.ts);
   const wins = closed.filter(s => s.hitType === 'tp'), losses = closed.filter(s => s.hitType === 'sl');
-  const winPct = closed.length > 0 ? Math.round(wins.length / closed.length * 100) : 0;
-  const net = wins.reduce((a, s) => a + (s.pnl || 0), 0) + losses.reduce((a, s) => a + (s.pnl || 0), 0);
-  const netStr = (net >= 0 ? '+' : '') + net + ' USD';
+  const winPct = closed.length > 0 ? Math.round(wins.length/closed.length*100) : 0;
+  const net = [...wins,...losses].reduce((acc,s) => acc + (s.pnl||0), 0);
+  const netStr = (net>=0 ? '+$' : '-$') + Math.abs(net).toFixed(2);
   const pnlCls = net >= 0 ? 'pnl-pos' : 'pnl-neg';
   document.getElementById('histStatsHdr').innerHTML = `
     <div class="hist-stats-header">
@@ -1071,264 +969,176 @@ function renderHistory() {
     : `<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">NO HISTORY</div></div>`;
 }
 
-// ── FETCH FROM PROXY (FIXED - Preserves open signals) ─────────────────────────
+// ── FETCH (CORE LOGIC — TP/SL with exact USD amount) ──────────────────────────
 async function fetchAll() {
   const dot = document.getElementById('liveDot'), txt = document.getElementById('liveText');
-  dot.style.background = 'var(--gold)';
-  txt.textContent = 'SYNC';
-  
+  dot.style.background = 'var(--gold)'; txt.textContent = 'SYNC';
   try {
     const fetchPromises = CHANNELS.map(async (channel, idx) => {
       try {
         const response = await fetch(PROXY_URL + channel.url);
         const data = await response.json();
-        
         if (data && data.messages && data.messages.length > 0) {
-          const signals = [];
+          const newSigs = [];
           const raws = [];
-          
           data.messages.forEach(msg => {
+            const ts = msg.timestamp || Math.floor(Date.now() / 1000);
+
+            // ── Step 1: Check if this is a TP/SL notification ──
+            const tpslResult = parseTPSL(msg.text);
+            if (tpslResult) {
+              // Extract pair from the TP/SL message itself
+              const hitPair = extractPairFromTPSL(msg.text);
+              // Find matching open signal (by pair, or also try dir if available)
+              const matchSignal = allSignals[idx].find(s =>
+                !s.hitType && hitPair && (s.pair||'').toUpperCase() === hitPair.toUpperCase()
+              );
+              if (matchSignal) {
+                matchSignal.hitType = tpslResult.type;
+                matchSignal.pnl = tpslResult.pnl;
+                matchSignal.hitTs = ts;
+                // Fire bell alert with real USD amount
+                addBellAlert(
+                  tpslResult.type,
+                  msg.text,
+                  matchSignal.pair,
+                  ts,
+                  tpslResult.pnl,
+                  matchSignal.dir,
+                  matchSignal.entry
+                );
+              } else {
+                // No matching open signal — store as raw
+                raws.push({ text: msg.text, ts });
+              }
+              return; // Don't process this message further as a new signal
+            }
+
+            // ── Step 2: Try to parse as new signal ──
             const parsed = parseSignal(msg.text);
             if (parsed && parsed.dir && parsed.pair) {
-              const hitType = parseTPSL(msg.text);
-              if (hitType) {
-                const existingSignal = allSignals[idx].find(s => 
-                  s.pair === parsed.pair && 
-                  s.dir === parsed.dir && 
-                  !s.hitType
-                );
-                if (existingSignal) {
-                  existingSignal.hitType = hitType;
-                  existingSignal.pnl = hitType === 'tp' ? 100 : -50;
-                  existingSignal.ts = msg.timestamp || Math.floor(Date.now() / 1000);
-                  addBellAlert(hitType, msg.text, parsed.pair, msg.timestamp || Math.floor(Date.now() / 1000), existingSignal.pnl, parsed.dir, parsed.entry);
-                }
-              } else {
-                const exists = allSignals[idx].some(s => 
-                  s.pair === parsed.pair && 
-                  s.dir === parsed.dir && 
-                  !s.hitType
-                );
-                if (!exists) {
-                  signals.push({
-                    ...parsed,
-                    ts: msg.timestamp || Math.floor(Date.now() / 1000),
-                    id: Date.now() + Math.random(),
-                    isNew: true,
-                    hitType: null,
-                    pnl: null,
-                    rawText: msg.text,
-                    ch: CH_LABELS[idx]
-                  });
-                  if (soundOn) playBeep('new');
-                }
+              // Check if already exists as open signal
+              const exists = allSignals[idx].some(s =>
+                s.pair === parsed.pair && s.dir === parsed.dir && !s.hitType
+              );
+              if (!exists) {
+                newSigs.push({
+                  ...parsed,
+                  ts,
+                  id: Date.now() + Math.random(),
+                  isNew: true,
+                  hitType: null,
+                  pnl: null,
+                  rawText: msg.text,
+                  ch: CH_LABELS[idx]
+                });
+                playBeep('new');
               }
             } else {
-              raws.push({
-                text: msg.text,
-                ts: msg.timestamp || Math.floor(Date.now() / 1000)
-              });
+              raws.push({ text: msg.text, ts });
             }
           });
-          
-          // ✅ IMPORTANT: Preserve existing open signals
-          const existingOpenSignals = allSignals[idx].filter(s => !s.hitType);
-          const allCurrentSignals = [...signals, ...existingOpenSignals];
-          
-          // Remove duplicates by pair+dir
-          const uniqueSignals = [];
+
+          // Merge new signals with existing open signals
+          const existingOpen = allSignals[idx].filter(s => !s.hitType);
+          const allCurrent = [...newSigs, ...existingOpen];
+          // Deduplicate by pair+dir
           const seen = new Set();
-          allCurrentSignals.forEach(s => {
+          const unique = [];
+          allCurrent.forEach(s => {
             const key = `${s.pair}_${s.dir}`;
-            if (!seen.has(key)) {
-              seen.add(key);
-              uniqueSignals.push(s);
-            }
+            if (!seen.has(key)) { seen.add(key); unique.push(s); }
           });
-          
-          uniqueSignals.sort((a, b) => b.ts - a.ts);
-          const filtered = uniqueSignals.filter(s => (Date.now() / 1000 - s.ts) < 86400);
-          
-          allSignals[idx] = filtered;
+          unique.sort((a,b) => b.ts - a.ts);
+          // Keep all closed signals + fresh unique open signals
+          const closedSigs = allSignals[idx].filter(s => s.hitType);
+          allSignals[idx] = [...unique.filter(s => (Date.now()/1000 - s.ts) < 86400), ...closedSigs];
           saveSignals();
-          renderChannelPage(idx, filtered, raws);
+          renderChannelPage(idx, allSignals[idx], raws);
         }
-      } catch (err) {
+      } catch(err) {
         console.error(`Error fetching ${channel.name}:`, err);
       }
     });
-    
     await Promise.all(fetchPromises);
-    renderLivePage();
-    renderStarredPage();
-    renderHistory();
-    updateDataStats();
-    
+    renderLivePage(); renderStarredPage(); renderHistory(); updateDataStats();
+    // Clear "new" flag after 5s
     setTimeout(() => {
-      allSignals.forEach((sigs, i) => {
-        sigs.forEach(s => { if (s.isNew) s.isNew = false; });
-        renderChannelPage(i, sigs, []);
-      });
+      allSignals.forEach((sigs,i) => { sigs.forEach(s => { if(s.isNew) s.isNew=false; }); renderChannelPage(i, sigs, []); });
       renderLivePage();
     }, 5000);
-    
     document.getElementById('lastSyncedTime').textContent = new Date().toLocaleTimeString();
-    
-  } catch (err) {
+  } catch(err) {
     console.error('Fetch error:', err);
     showToast('Connection error', 'red');
   }
-  
-  dot.style.background = 'var(--green)';
-  txt.textContent = 'LIVE';
+  dot.style.background = 'var(--green)'; txt.textContent = 'LIVE';
   const bar = document.getElementById('refreshBar');
-  bar.style.animation = 'none';
-  bar.offsetHeight;
+  bar.style.animation = 'none'; bar.offsetHeight;
   bar.style.animation = `shrink ${refreshSec}s linear infinite`;
 }
 
 // ── SWIPE ─────────────────────────────────────────────────────────────────────
-let txS = 0, tyS = 0, ttS = 0, swiping = false, swIndTimer = null;
+let txS=0, tyS=0, ttS=0, swiping=false, swIndTimer=null;
 const wrapper = document.getElementById('pagesWrapper');
 const swInd = document.getElementById('swipeIndicator');
-function setTabOffset(i, instant = false) {
+function setTabOffset(i, instant=false) {
   wrapper.style.transition = instant ? 'none' : 'transform 0.3s cubic-bezier(0.4,0,0.2,1)';
   wrapper.style.transform = `translateX(-${i * 100}%)`;
 }
 function showSwipeHint(lbl) {
-  swInd.textContent = lbl;
-  swInd.classList.add('show');
-  clearTimeout(swIndTimer);
-  swIndTimer = setTimeout(() => swInd.classList.remove('show'), 700);
+  swInd.textContent = lbl; swInd.classList.add('show');
+  clearTimeout(swIndTimer); swIndTimer = setTimeout(() => swInd.classList.remove('show'), 700);
 }
-
 const mc = document.getElementById('mainContent');
-mc.addEventListener('touchstart', e => {
-  if (currentNav !== 'signals') return;
-  txS = e.touches[0].clientX;
-  tyS = e.touches[0].clientY;
-  ttS = Date.now();
-  swiping = false;
-}, { passive: true });
-mc.addEventListener('touchmove', e => {
-  if (currentNav !== 'signals') return;
-  const dx = e.touches[0].clientX - txS, dy = e.touches[0].clientY - tyS;
-  if (!swiping && Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 8) swiping = true;
-}, { passive: true });
+mc.addEventListener('touchstart', e => { if(currentNav!=='signals') return; txS=e.touches[0].clientX; tyS=e.touches[0].clientY; ttS=Date.now(); swiping=false; }, {passive:true});
+mc.addEventListener('touchmove', e => { if(currentNav!=='signals') return; const dx=e.touches[0].clientX-txS, dy=e.touches[0].clientY-tyS; if(!swiping&&Math.abs(dx)>Math.abs(dy)&&Math.abs(dx)>8) swiping=true; }, {passive:true});
 mc.addEventListener('touchend', e => {
-  if (currentNav !== 'signals' || !swiping) return;
-  const dx = e.changedTouches[0].clientX - txS;
-  const dt = Date.now() - ttS;
-  if ((dt < 400 || Math.abs(dx) > 50) && Math.abs(dx) > 35) {
-    if (dx < -35 && currentTab < TAB_COUNT - 1) {
-      switchTab(currentTab + 1);
-      showSwipeHint(TAB_LABELS[currentTab + 1]);
-    } 
-    else if (dx > 35 && currentTab > 0) {
-      switchTab(currentTab - 1);
-      showSwipeHint(TAB_LABELS[currentTab - 1]);
-    }
+  if(currentNav!=='signals'||!swiping) return;
+  const dx=e.changedTouches[0].clientX-txS, dt=Date.now()-ttS;
+  if((dt<400||Math.abs(dx)>50)&&Math.abs(dx)>35) {
+    if(dx<-35&&currentTab<TAB_COUNT-1) { switchTab(currentTab+1); showSwipeHint(TAB_LABELS[currentTab]); }
+    else if(dx>35&&currentTab>0) { switchTab(currentTab-1); showSwipeHint(TAB_LABELS[currentTab]); }
   }
-  swiping = false;
-}, { passive: true });
+  swiping=false;
+}, {passive:true});
 
 // ── NAV ───────────────────────────────────────────────────────────────────────
 function switchTab(i) {
   currentTab = i;
-  document.querySelectorAll('.tab').forEach((t, j) => t.className = 'tab' + (j === i ? ' active' : ''));
+  document.querySelectorAll('.tab').forEach((t,j) => t.className='tab'+(j===i?' active':''));
   setTabOffset(i);
 }
-function setNav(id) {
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-  document.getElementById(id).classList.add('active');
-}
+function setNav(id) { document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active')); document.getElementById(id).classList.add('active'); }
 function showPages() {
-  document.getElementById('channelTabs').style.display = 'flex';
-  wrapper.style.display = 'flex';
+  document.getElementById('channelTabs').style.display='flex';
+  wrapper.style.display='flex';
   document.getElementById('pageHistory').classList.remove('active');
   document.getElementById('pageSettings').classList.remove('active');
 }
+function goSignals() { currentNav='signals'; setNav('navSignals'); showPages(); setTabOffset(currentTab,true); if(bellPanelOpen) toggleBellPanel(); }
+function goStarredTab() { currentNav='signals'; setNav('navStarred'); showPages(); switchTab(4); if(bellPanelOpen) toggleBellPanel(); }
+function goStarredNav() { currentNav='signals'; setNav('navStarred'); showPages(); switchTab(4); if(bellPanelOpen) toggleBellPanel(); }
+function goHistory() { currentNav='history'; setNav('navHistory'); document.getElementById('channelTabs').style.display='none'; wrapper.style.display='none'; document.getElementById('pageHistory').classList.add('active'); document.getElementById('pageSettings').classList.remove('active'); renderHistory(); if(bellPanelOpen) toggleBellPanel(); }
+function goSettings() { currentNav='settings'; setNav('navSettings'); document.getElementById('channelTabs').style.display='none'; wrapper.style.display='none'; document.getElementById('pageHistory').classList.remove('active'); document.getElementById('pageSettings').classList.add('active'); if(bellPanelOpen) toggleBellPanel(); }
+function showToast(msg, type='') { const t=document.getElementById('toast'); t.textContent=msg; t.className='toast'+(type?' '+type:''); t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2800); }
 
-function goSignals() {
-  currentNav = 'signals';
-  setNav('navSignals');
-  showPages();
-  setTabOffset(currentTab, true);
-  if (bellPanelOpen) toggleBellPanel();
-}
-function goStarredTab() {
-  currentNav = 'signals';
-  setNav('navStarred');
-  showPages();
-  switchTab(4);
-  if (bellPanelOpen) toggleBellPanel();
-}
-function goStarredNav() {
-  currentNav = 'signals';
-  setNav('navStarred');
-  showPages();
-  switchTab(4);
-  if (bellPanelOpen) toggleBellPanel();
-}
-function goHistory() {
-  currentNav = 'history';
-  setNav('navHistory');
-  document.getElementById('channelTabs').style.display = 'none';
-  wrapper.style.display = 'none';
-  document.getElementById('pageHistory').classList.add('active');
-  document.getElementById('pageSettings').classList.remove('active');
-  renderHistory();
-  if (bellPanelOpen) toggleBellPanel();
-}
-function goSettings() {
-  currentNav = 'settings';
-  setNav('navSettings');
-  document.getElementById('channelTabs').style.display = 'none';
-  wrapper.style.display = 'none';
-  document.getElementById('pageHistory').classList.remove('active');
-  document.getElementById('pageSettings').classList.add('active');
-  if (bellPanelOpen) toggleBellPanel();
-}
-
-function showToast(msg, type = '') {
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.className = 'toast' + (type ? ' ' + type : '');
-  t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 2500);
-}
-
-setInterval(() => {
-  document.querySelectorAll('.rel-t').forEach(el => {
-    const ts = parseInt(el.getAttribute('data-ts'));
-    if (ts) el.textContent = timeAgo(ts);
-  });
-}, 30000);
-
-if ('Notification' in window && Notification.permission === 'default') {
-  setTimeout(() => Notification.requestPermission(), 2000);
-}
+setInterval(() => { document.querySelectorAll('.rel-t').forEach(el => { const ts=parseInt(el.getAttribute('data-ts')); if(ts) el.textContent=timeAgo(ts); }); }, 30000);
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
 setTabOffset(0, true);
 registerSW();
 loadSettings();
 updateFvStarCount();
-
-// ── Reload pe saved signals turant dikhao ──────────────────────────────────────
-allSignals.forEach((sigs, i) => renderChannelPage(i, sigs, []));
-renderLivePage();
-renderStarredPage();
-
-if ('Notification' in window && Notification.permission === 'granted') {
-  const s = document.getElementById('notifStatus'), t = document.getElementById('notifToggle');
-  if (s) {
-    s.textContent = 'ENABLED';
-    s.style.color = 'var(--green)';
-  }
-  if (t) t.classList.add('on');
+allSignals.forEach((sigs,i) => renderChannelPage(i,sigs,[]));
+renderLivePage(); renderStarredPage();
+if('Notification' in window && Notification.permission==='granted') {
+  const s=document.getElementById('notifStatus'), t=document.getElementById('notifToggle');
+  if(s){s.textContent='ENABLED';s.style.color='var(--green)';}
+  if(t) t.classList.add('on');
+} else if('Notification' in window && Notification.permission==='default') {
+  setTimeout(()=>Notification.requestPermission(), 2000);
 }
-
 fetchAll();
 refreshInterval = setInterval(fetchAll, refreshSec * 1000);
 </script>
