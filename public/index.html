@@ -409,13 +409,13 @@ const LS_SIGNALS_KEY = 'ts_all_signals';
 
 // ========== SIGNALS PERSISTENCE ==========
 function saveSignals() {
-  try { localStorage.setItem(LS_SIGNALS_KEY, JSON.stringify(allSignals)); } catch(e) {}
+  try { localStorage.setItem(LS_SIGNALS_KEY, JSON.stringify(allSignals)); } catch(e) { console.error("Save failed", e); }
 }
 function loadSignals() {
   try {
     const saved = localStorage.getItem(LS_SIGNALS_KEY);
     if (saved) return JSON.parse(saved);
-  } catch(e) {}
+  } catch(e) { console.error("Load failed", e); }
   return [[], [], []];
 }
 
@@ -722,24 +722,14 @@ function parseTPSL(text) {
   else if (/SL\s*(HIT|REACHED|TRIGGERED)|STOP\s*LOSS\s*(HIT|TRIGGERED)|STOPPED\s*OUT|❌/.test(t)) type = 'sl';
   if (!type) return null;
   let pnl = null;
-  const pnlPatterns = [
-    /(?:profit|loss|pnl)\s*[:\-]?\s*[+\-]?\s*\$?\s*([0-9]+(?:\.[0-9]+)?)/i,
-    /[+\-]\s*\$\s*([0-9]+(?:\.[0-9]+)?)/,
-    /\$\s*([0-9]+(?:\.[0-9]+)?)/,
-    /([0-9]+(?:\.[0-9]+)?)\s*USD/i,
-  ];
-  for (const pat of pnlPatterns) {
-    const m = text.match(pat);
-    if (m) {
-      pnl = parseFloat(m[1]);
-      const rawMatch = m[0];
-      if (/[-]/.test(rawMatch.replace(/[0-9.]/g, '').replace('USD','').replace('usd','').replace('$','').replace('profit','').replace('Profit',''))) {
-        pnl = -Math.abs(pnl);
-      }
-      break;
-    }
+  const profitMatch = text.match(/(?:Profit|Reward)\s*[:\-·]\s*[+]?\$?\s*([0-9]+(?:\.[0-9]+)?)/i);
+  if (profitMatch) { pnl = parseFloat(profitMatch[1]); if (type === 'tp') pnl = Math.abs(pnl); }
+  const lossMatch = text.match(/(?:Loss|Risk)\s*[:\-·]\s*[-]?\$?\s*([0-9]+(?:\.[0-9]+)?)/i);
+  if (lossMatch) { pnl = parseFloat(lossMatch[1]); if (type === 'sl') pnl = -Math.abs(pnl); }
+  if (pnl === null) {
+    const dollarMatch = text.match(/\$?\s*([0-9]+(?:\.[0-9]+)?)/);
+    if (dollarMatch) { pnl = parseFloat(dollarMatch[1]); if (type === 'sl') pnl = -Math.abs(pnl); }
   }
-  if (type === 'sl' && pnl != null && pnl > 0) pnl = -pnl;
   return { type, pnl };
 }
 
@@ -767,10 +757,12 @@ function parseSignal(text) {
 
 function extractPairFromTPSL(text) {
   if (!text) return null;
-  const m = text.match(/(?:TP|SL)\s*(?:HIT|REACHED|TRIGGERED)\s*[:\-·]\s*([A-Z]{6})/i);
-  if (m) return m[1].toUpperCase();
-  const m2 = text.match(/\b([A-Z]{3}[\/\.]?[A-Z]{3})\b/i) || text.match(/\b([A-Z]{6})\b/);
-  return m2 ? m2[1].toUpperCase().replace(/[\/\.]/g,'') : null;
+  let m = text.match(/(?:TP|SL)\s*(?:HIT|REACHED|TRIGGERED)\s*[:\-·]\s*([A-Z]{3,8})/i);
+  if (m) return m[1].toUpperCase().replace(/[\/\.]/g, '');
+  m = text.match(/(?:TP|SL)\s*(?:HIT|REACHED|TRIGGERED)\s+([A-Z]{3,8})/i);
+  if (m) return m[1].toUpperCase().replace(/[\/\.]/g, '');
+  m = text.match(/\b([A-Z]{3}[\/\.]?[A-Z]{3})\b/i) || text.match(/\b([A-Z]{6})\b/);
+  return m ? m[1].toUpperCase().replace(/[\/\.]/g, '') : null;
 }
 
 function timeAgo(unix) {
@@ -947,10 +939,14 @@ function renderHistory() {
     : `<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">NO HISTORY</div></div>`;
 }
 
-// ── FETCH (FIXED — NO TIMESTAMP FILTER, SIGNALS STAY FOREVER) ─────────────────
+// ── FETCH (FIXED — WITH BACKUP RESTORE) ─────────────────────────────────────
 async function fetchAll() {
   const dot = document.getElementById('liveDot'), txt = document.getElementById('liveText');
   dot.style.background = 'var(--gold)'; txt.textContent = 'SYNC';
+  
+  // Save backup before fetch
+  const backupSignals = JSON.parse(JSON.stringify(allSignals));
+  
   try {
     const fetchPromises = CHANNELS.map(async (channel, idx) => {
       try {
@@ -960,13 +956,10 @@ async function fetchAll() {
           const newSigs = [];
           const raws = [];
           
-          // Sort messages by timestamp (oldest first) to ensure proper order
           const sortedMessages = [...data.messages].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
           
           sortedMessages.forEach(msg => {
             const ts = msg.timestamp || Math.floor(Date.now() / 1000);
-
-            // ── Step 1: Check if this is a TP/SL notification ──
             const tpslResult = parseTPSL(msg.text);
             if (tpslResult) {
               const hitPair = extractPairFromTPSL(msg.text);
@@ -978,21 +971,15 @@ async function fetchAll() {
                 matchSignal.pnl = tpslResult.pnl;
                 matchSignal.hitTs = ts;
                 addBellAlert(
-                  tpslResult.type,
-                  msg.text,
-                  matchSignal.pair,
-                  ts,
-                  tpslResult.pnl,
-                  matchSignal.dir,
-                  matchSignal.entry
+                  tpslResult.type, msg.text, matchSignal.pair, ts,
+                  tpslResult.pnl, matchSignal.dir, matchSignal.entry
                 );
               } else {
                 raws.push({ text: msg.text, ts });
               }
               return;
             }
-
-            // ── Step 2: Try to parse as new signal ──
+            
             const parsed = parseSignal(msg.text);
             if (parsed && parsed.dir && parsed.pair) {
               const exists = allSignals[idx].some(s =>
@@ -1000,14 +987,9 @@ async function fetchAll() {
               );
               if (!exists) {
                 newSigs.push({
-                  ...parsed,
-                  ts,
-                  id: Date.now() + Math.random(),
-                  isNew: true,
-                  hitType: null,
-                  pnl: null,
-                  rawText: msg.text,
-                  ch: CH_LABELS[idx]
+                  ...parsed, ts, id: Date.now() + Math.random(),
+                  isNew: true, hitType: null, pnl: null,
+                  rawText: msg.text, ch: CH_LABELS[idx]
                 });
                 playBeep('new');
               }
@@ -1015,12 +997,10 @@ async function fetchAll() {
               raws.push({ text: msg.text, ts });
             }
           });
-
-          // Merge new signals with existing open signals
+          
           const existingOpen = allSignals[idx].filter(s => !s.hitType);
           const allCurrent = [...newSigs, ...existingOpen];
           
-          // Deduplicate by pair+dir
           const seen = new Set();
           const unique = [];
           allCurrent.forEach(s => {
@@ -1029,28 +1009,49 @@ async function fetchAll() {
           });
           unique.sort((a,b) => b.ts - a.ts);
           
-          // Keep all open signals (NO timestamp filter — signals stay forever!)
           const closedSigs = allSignals[idx].filter(s => s.hitType);
           allSignals[idx] = [...unique, ...closedSigs];
-          saveSignals();
           renderChannelPage(idx, allSignals[idx], raws);
         }
       } catch(err) {
         console.error(`Error fetching ${channel.name}:`, err);
       }
     });
+    
     await Promise.all(fetchPromises);
+    
+    // ✅ IMPORTANT: Agar fetch ke baad koi open signal nahi bacha, lekin backup me tha, to restore karo
+    const hasOpenSignals = allSignals.some(ch => ch.some(s => !s.hitType));
+    const backupHadSignals = backupSignals.some(ch => ch.some(s => !s.hitType));
+    
+    if (!hasOpenSignals && backupHadSignals) {
+      console.log("⚠️ Signals lost! Restoring from backup...");
+      allSignals = backupSignals;
+      saveSignals();
+      allSignals.forEach((sigs, i) => renderChannelPage(i, sigs, []));
+    } else {
+      saveSignals();
+    }
+    
     renderLivePage(); renderStarredPage(); renderHistory(); updateDataStats();
-    // Clear "new" flag after 5s
+    
     setTimeout(() => {
       allSignals.forEach((sigs,i) => { sigs.forEach(s => { if(s.isNew) s.isNew=false; }); renderChannelPage(i, sigs, []); });
       renderLivePage();
     }, 5000);
+    
     document.getElementById('lastSyncedTime').textContent = new Date().toLocaleTimeString();
+    
   } catch(err) {
     console.error('Fetch error:', err);
-    showToast('Connection error', 'red');
+    // Restore from backup on error
+    allSignals = backupSignals;
+    saveSignals();
+    allSignals.forEach((sigs, i) => renderChannelPage(i, sigs, []));
+    renderLivePage(); renderStarredPage(); renderHistory();
+    showToast('Connection error - using saved signals', 'red');
   }
+  
   dot.style.background = 'var(--green)'; txt.textContent = 'LIVE';
   const bar = document.getElementById('refreshBar');
   bar.style.animation = 'none'; bar.offsetHeight;
