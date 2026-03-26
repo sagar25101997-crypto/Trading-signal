@@ -11,7 +11,13 @@ const CHANNELS = [
   { name: 'CRT',   token: '8379004300:AAEAmp9LoA5LTbIdxHoIpsKAmAVfUr0iapM', chatId: '-1003562279289' },
 ];
 
+// In-memory cache — server jab tak live hai, messages yaad rakhta hai
 const offsets = {};
+const messageCache = {}; // chatId -> [{ text, timestamp }]
+CHANNELS.forEach(ch => {
+  offsets[ch.chatId] = 0;
+  messageCache[ch.chatId] = [];
+});
 
 function telegramGet(token, method, params) {
   return new Promise((resolve, reject) => {
@@ -28,32 +34,15 @@ function telegramGet(token, method, params) {
   });
 }
 
-async function initOffsets() {
-  for (const ch of CHANNELS) {
-    try {
-      const data = await telegramGet(ch.token, 'getUpdates', { limit: 100 });
-      if (data.ok && data.result.length > 0) {
-        const lastId = data.result[data.result.length - 1].update_id;
-        offsets[ch.chatId] = lastId + 1;
-        await telegramGet(ch.token, 'getUpdates', { offset: offsets[ch.chatId], limit: 1 });
-        console.log(`✅ ${ch.name} offset set`);
-      } else {
-        offsets[ch.chatId] = 0;
-        console.log(`✅ ${ch.name} no old messages`);
-      }
-    } catch(e) {
-      offsets[ch.chatId] = 0;
-    }
-  }
-}
-
-async function getChannelMessages(channel) {
+// Telegram se naye messages fetch karo aur cache mein add karo
+async function pollChannel(channel) {
   try {
-    const params = { limit: 50 };
-    if (offsets[channel.chatId]) params.offset = offsets[channel.chatId];
+    const params = { limit: 100, timeout: 0 };
+    if (offsets[channel.chatId] > 0) params.offset = offsets[channel.chatId];
     const data = await telegramGet(channel.token, 'getUpdates', params);
-    if (!data.ok) return [];
-    const messages = data.result
+    if (!data.ok) return;
+
+    const newMsgs = data.result
       .filter(u => {
         const msg = u.message || u.channel_post;
         return msg && String(msg.chat.id) === channel.chatId;
@@ -62,37 +51,67 @@ async function getChannelMessages(channel) {
         const msg = u.message || u.channel_post;
         return { text: msg.text || msg.caption || '', timestamp: msg.date };
       })
-      .filter(m => m.text)
-      .reverse();
+      .filter(m => m.text);
+
+    if (newMsgs.length > 0) {
+      // Cache mein add karo, duplicates avoid karo (timestamp+text key se)
+      const existingKeys = new Set(
+        messageCache[channel.chatId].map(m => `${m.timestamp}_${m.text}`)
+      );
+      newMsgs.forEach(m => {
+        const key = `${m.timestamp}_${m.text}`;
+        if (!existingKeys.has(key)) {
+          messageCache[channel.chatId].push(m);
+          existingKeys.add(key);
+        }
+      });
+
+      // Last 200 messages rakho, purane hatao
+      messageCache[channel.chatId].sort((a, b) => b.timestamp - a.timestamp);
+      if (messageCache[channel.chatId].length > 200) {
+        messageCache[channel.chatId] = messageCache[channel.chatId].slice(0, 200);
+      }
+
+      console.log(`📨 ${channel.name}: ${newMsgs.length} new msg(s), cache=${messageCache[channel.chatId].length}`);
+    }
+
     if (data.result.length > 0) {
       offsets[channel.chatId] = data.result[data.result.length - 1].update_id + 1;
     }
-    return messages;
   } catch(e) {
-    return [];
+    console.error(`Poll error ${channel.name}:`, e.message);
   }
 }
 
-app.get('/daily', async (req, res) => {
-  const channel = CHANNELS.find(c => c.name === 'DAILY');
-  const messages = await getChannelMessages(channel);
-  res.json({ messages });
+// Har 5 second mein sabhi channels poll karo
+async function pollAll() {
+  for (const ch of CHANNELS) {
+    await pollChannel(ch);
+  }
+}
+setInterval(pollAll, 5000);
+
+// Startup pe ek baar turant poll karo
+pollAll().then(() => console.log('✅ Initial poll done'));
+
+// Routes — cache se return karo (server restart pe bhi cached data hai jab tak process live hai)
+app.get('/daily', (req, res) => {
+  const ch = CHANNELS.find(c => c.name === 'DAILY');
+  res.json({ messages: messageCache[ch.chatId] });
 });
 
-app.get('/fvg', async (req, res) => {
-  const channel = CHANNELS.find(c => c.name === 'FVG');
-  const messages = await getChannelMessages(channel);
-  res.json({ messages });
+app.get('/fvg', (req, res) => {
+  const ch = CHANNELS.find(c => c.name === 'FVG');
+  res.json({ messages: messageCache[ch.chatId] });
 });
 
-app.get('/crt', async (req, res) => {
-  const channel = CHANNELS.find(c => c.name === 'CRT');
-  const messages = await getChannelMessages(channel);
-  res.json({ messages });
+app.get('/crt', (req, res) => {
+  const ch = CHANNELS.find(c => c.name === 'CRT');
+  res.json({ messages: messageCache[ch.chatId] });
 });
 
-app.get('/reset', async (req, res) => {
-  await initOffsets();
+app.get('/reset', (req, res) => {
+  CHANNELS.forEach(ch => { offsets[ch.chatId] = 0; });
   res.json({ ok: true });
 });
 
@@ -100,7 +119,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
   console.log('Server running on port', PORT);
-  await initOffsets();
 });
