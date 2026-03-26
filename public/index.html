@@ -407,6 +407,21 @@ const CH_LABELS = ['DAILY', 'FVG', 'CRT'];
 const TAB_LABELS = ['LIVE', 'DAILY', 'FVG', 'CRT', '⭐ FV'];
 const LS_FV_KEY = 'ts_fv_symbols';
 const LS_SETTINGS_KEY = 'ts_settings';
+const LS_SIGNALS_KEY = 'ts_all_signals';
+
+// ========== SIGNALS PERSISTENCE ==========
+function saveSignals() {
+  try {
+    localStorage.setItem(LS_SIGNALS_KEY, JSON.stringify(allSignals));
+  } catch(e) {}
+}
+function loadSignals() {
+  try {
+    const saved = localStorage.getItem(LS_SIGNALS_KEY);
+    if (saved) return JSON.parse(saved);
+  } catch(e) {}
+  return [[], [], []];
+}
 
 // ========== SETTINGS STATE ==========
 let soundOn = true;
@@ -419,7 +434,7 @@ let compactMode = false;
 let fvOnlyAlerts = false;
 let currentTab = 0;
 let currentNav = 'signals';
-let allSignals = [[], [], []];
+let allSignals = loadSignals();
 let _uid = 0;
 let bellAlerts = [], bellUnread = 0, bellPanelOpen = false, seenAlertIds = new Set();
 let refreshInterval = null;
@@ -1135,6 +1150,7 @@ async function fetchAll() {
           const filtered = uniqueSignals.filter(s => (Date.now() / 1000 - s.ts) < 86400);
           
           allSignals[idx] = filtered;
+          saveSignals();
           renderChannelPage(idx, filtered, raws);
         }
       } catch (err) {
@@ -1298,6 +1314,11 @@ setTabOffset(0, true);
 registerSW();
 loadSettings();
 updateFvStarCount();
+
+// ── Reload pe saved signals turant dikhao ──────────────────────────────────────
+allSignals.forEach((sigs, i) => renderChannelPage(i, sigs, []));
+renderLivePage();
+renderStarredPage();
 
 if ('Notification' in window && Notification.permission === 'granted') {
   const s = document.getElementById('notifStatus'), t = document.getElementById('notifToggle');
