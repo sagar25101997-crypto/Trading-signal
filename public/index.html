@@ -939,7 +939,7 @@ function renderHistory() {
     : `<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">NO HISTORY</div></div>`;
 }
 
-// ── FETCH (FIXED — WITH BACKUP RESTORE) ─────────────────────────────────────
+// ── FETCH (FIXED — WITH BACKUP RESTORE AND PERMANENT CLOSE) ─────────────────
 async function fetchAll() {
   const dot = document.getElementById('liveDot'), txt = document.getElementById('liveText');
   dot.style.background = 'var(--gold)'; txt.textContent = 'SYNC';
@@ -960,16 +960,23 @@ async function fetchAll() {
           
           sortedMessages.forEach(msg => {
             const ts = msg.timestamp || Math.floor(Date.now() / 1000);
+
+            // ── Step 1: Check if this is a TP/SL notification ──
             const tpslResult = parseTPSL(msg.text);
             if (tpslResult) {
               const hitPair = extractPairFromTPSL(msg.text);
-              const matchSignal = allSignals[idx].find(s =>
-                !s.hitType && hitPair && (s.pair||'').toUpperCase() === hitPair.toUpperCase()
-              );
+              // SIMPLE MATCHING - direct pair comparison
+              const matchSignal = allSignals[idx].find(s => !s.hitType && s.pair === hitPair);
+              
               if (matchSignal) {
                 matchSignal.hitType = tpslResult.type;
                 matchSignal.pnl = tpslResult.pnl;
                 matchSignal.hitTs = ts;
+                
+                // ✅ MOVE FROM OPEN TO CLOSED PERMANENTLY
+                allSignals[idx] = allSignals[idx].filter(s => s.id !== matchSignal.id);
+                allSignals[idx].push(matchSignal);
+                
                 addBellAlert(
                   tpslResult.type, msg.text, matchSignal.pair, ts,
                   tpslResult.pnl, matchSignal.dir, matchSignal.entry
@@ -979,7 +986,8 @@ async function fetchAll() {
               }
               return;
             }
-            
+
+            // ── Step 2: Try to parse as new signal ──
             const parsed = parseSignal(msg.text);
             if (parsed && parsed.dir && parsed.pair) {
               const exists = allSignals[idx].some(s =>
@@ -1020,7 +1028,7 @@ async function fetchAll() {
     
     await Promise.all(fetchPromises);
     
-    // ✅ IMPORTANT: Agar fetch ke baad koi open signal nahi bacha, lekin backup me tha, to restore karo
+    // ✅ Backup restore logic - if signals lost, restore from backup
     const hasOpenSignals = allSignals.some(ch => ch.some(s => !s.hitType));
     const backupHadSignals = backupSignals.some(ch => ch.some(s => !s.hitType));
     
