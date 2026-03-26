@@ -11,7 +11,6 @@
 <link rel="manifest" href="/manifest.json">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Exo+2:wght@300;400;600;700&display=swap" rel="stylesheet">
 <style>
-/* Same CSS as before - keeping it compact */
 :root {
   --bg:#0a0a0a; --bg2:#111111; --bg3:#181818;
   --border:#222222; --border2:#2a2a2a;
@@ -353,7 +352,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--ui);display:flex;f
       <div class="settings-title">ℹ️ ABOUT</div>
       <div class="info-row">
         <span class="info-label">Version</span>
-        <span class="info-value">v3.4</span>
+        <span class="info-value">v3.5</span>
       </div>
       <div class="info-row">
         <span class="info-label">Data Source</span>
@@ -398,38 +397,55 @@ body{background:var(--bg);color:var(--text);font-family:var(--ui);display:flex;f
 const PROXY_URL = 'https://trading-signal-2g17.onrender.com';
 const CHANNELS = [
   { id: 'daily', name: 'DAILY', url: '/daily' },
-  { id: 'fvg', name: 'FVG', url: '/fvg' },
-  { id: 'crt', name: 'CRT', url: '/crt' }
+  { id: 'fvg',   name: 'FVG',   url: '/fvg'   },
+  { id: 'crt',   name: 'CRT',   url: '/crt'   }
 ];
 const CH_LABELS = ['DAILY', 'FVG', 'CRT'];
 const TAB_LABELS = ['LIVE', 'DAILY', 'FVG', 'CRT', '⭐ FV'];
 const TAB_COUNT = 5;
-const LS_FV_KEY = 'ts_fv_symbols';
-const LS_SETTINGS_KEY = 'ts_settings';
-const LS_SIGNALS_KEY = 'ts_all_signals';
-const LS_HISTORY_KEY = 'ts_closed_history';
+const LS_FV_KEY        = 'ts_fv_symbols';
+const LS_SETTINGS_KEY  = 'ts_settings';
+const LS_SIGNALS_KEY   = 'ts_all_signals_v2';   // v2 — fresh start
+const LS_HISTORY_KEY   = 'ts_closed_history_v2';
+const LS_SEEN_MSG_KEY  = 'ts_seen_msgs';         // ← NEW: seen message timestamps
 
-// ========== HISTORY STORE (Permanent) ==========
+// ========== SEEN MESSAGES (prevent re-processing) ==========
+// We track every message timestamp+text combo we've already processed
+// so on next fetch we don't re-parse them as new signals or TP/SL
+let seenMsgKeys = new Set();
+function loadSeenMsgs() {
+  try {
+    const saved = localStorage.getItem(LS_SEEN_MSG_KEY);
+    if (saved) seenMsgKeys = new Set(JSON.parse(saved));
+  } catch(e) { seenMsgKeys = new Set(); }
+}
+function saveSeenMsgs() {
+  try {
+    // Keep only last 2000 keys to avoid storage bloat
+    const arr = [...seenMsgKeys].slice(-2000);
+    localStorage.setItem(LS_SEEN_MSG_KEY, JSON.stringify(arr));
+  } catch(e) {}
+}
+function msgKey(ts, text) {
+  return ts + '_' + (text || '').substring(0, 40);
+}
+
+// ========== HISTORY STORE ==========
 let closedHistory = [];
-
 function loadHistory() {
   try {
     const saved = localStorage.getItem(LS_HISTORY_KEY);
     if (saved) closedHistory = JSON.parse(saved);
   } catch(e) { closedHistory = []; }
 }
-
 function saveHistory() {
   try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(closedHistory)); } catch(e) {}
 }
-
 function addToHistory(signal) {
-  // Add to history with timestamp
-  closedHistory.unshift({
-    ...signal,
-    closedAt: Math.floor(Date.now() / 1000)
-  });
-  // Keep last 500
+  // Avoid duplicate history entries
+  const alreadyIn = closedHistory.some(h => h.id === signal.id);
+  if (alreadyIn) return;
+  closedHistory.unshift({ ...signal, closedAt: Math.floor(Date.now() / 1000) });
   if (closedHistory.length > 500) closedHistory = closedHistory.slice(0, 500);
   saveHistory();
 }
@@ -447,49 +463,41 @@ function loadSignals() {
 }
 
 // ========== SETTINGS STATE ==========
-let soundOn = true;
-let showChannelBadge = true;
-let showRR = true;
-let refreshSec = 10;
-let currentTheme = 'dark';
-let currentFontSize = 'medium';
-let compactMode = false;
-let fvOnlyAlerts = false;
-let currentTab = 0;
-let currentNav = 'signals';
+let soundOn = true, showChannelBadge = true, showRR = true;
+let refreshSec = 10, currentTheme = 'dark', currentFontSize = 'medium';
+let compactMode = false, fvOnlyAlerts = false;
+let currentTab = 0, currentNav = 'signals';
 let allSignals = loadSignals();
 let _uid = 0;
 let bellAlerts = [], bellUnread = 0, bellPanelOpen = false, seenAlertIds = new Set();
 let refreshInterval = null;
 
-// Load history on startup
 loadHistory();
+loadSeenMsgs();
 
 function loadSettings() {
   try {
     const saved = localStorage.getItem(LS_SETTINGS_KEY);
     if (saved) {
       const s = JSON.parse(saved);
-      soundOn = s.soundOn !== undefined ? s.soundOn : true;
-      showChannelBadge = s.showChannelBadge !== undefined ? s.showChannelBadge : true;
-      showRR = s.showRR !== undefined ? s.showRR : true;
-      refreshSec = s.refreshSec || 10;
-      currentTheme = s.theme || 'dark';
-      currentFontSize = s.fontSize || 'medium';
-      compactMode = s.compactMode || false;
-      fvOnlyAlerts = s.fvOnlyAlerts || false;
+      soundOn            = s.soundOn !== undefined ? s.soundOn : true;
+      showChannelBadge   = s.showChannelBadge !== undefined ? s.showChannelBadge : true;
+      showRR             = s.showRR !== undefined ? s.showRR : true;
+      refreshSec         = s.refreshSec || 10;
+      currentTheme       = s.theme || 'dark';
+      currentFontSize    = s.fontSize || 'medium';
+      compactMode        = s.compactMode || false;
+      fvOnlyAlerts       = s.fvOnlyAlerts || false;
     }
   } catch(e) {}
   applySettings();
 }
-
 function saveSettings() {
   localStorage.setItem(LS_SETTINGS_KEY, JSON.stringify({
     soundOn, showChannelBadge, showRR, refreshSec,
     theme: currentTheme, fontSize: currentFontSize, compactMode, fvOnlyAlerts
   }));
 }
-
 function applySettings() {
   document.body.classList.remove('light');
   if (currentTheme === 'light') document.body.classList.add('light');
@@ -497,11 +505,11 @@ function applySettings() {
     if (!window.matchMedia('(prefers-color-scheme: dark)').matches) document.body.classList.add('light');
   }
   const root = document.documentElement;
-  if (currentFontSize === 'small') root.style.fontSize = '12px';
+  if (currentFontSize === 'small')       root.style.fontSize = '12px';
   else if (currentFontSize === 'medium') root.style.fontSize = '14px';
-  else if (currentFontSize === 'large') root.style.fontSize = '16px';
+  else if (currentFontSize === 'large')  root.style.fontSize = '16px';
   if (compactMode) document.body.classList.add('compact');
-  else document.body.classList.remove('compact');
+  else             document.body.classList.remove('compact');
   document.querySelectorAll('.interval-btn').forEach(btn => {
     btn.classList.toggle('active', parseInt(btn.textContent) === refreshSec);
   });
@@ -511,11 +519,11 @@ function applySettings() {
   document.querySelectorAll('.font-btn').forEach(btn => {
     btn.classList.toggle('active', btn.textContent.toLowerCase() === currentFontSize);
   });
-  document.getElementById('compactToggle').className = 'toggle' + (compactMode ? ' on' : '');
-  document.getElementById('fvOnlyToggle').className = 'toggle' + (fvOnlyAlerts ? ' on' : '');
-  document.getElementById('soundToggle').className = 'toggle' + (soundOn ? ' on' : '');
-  document.getElementById('badgeToggle').className = 'toggle' + (showChannelBadge ? ' on' : '');
-  document.getElementById('rrToggle').className = 'toggle' + (showRR ? ' on' : '');
+  document.getElementById('compactToggle').className   = 'toggle' + (compactMode   ? ' on' : '');
+  document.getElementById('fvOnlyToggle').className    = 'toggle' + (fvOnlyAlerts  ? ' on' : '');
+  document.getElementById('soundToggle').className     = 'toggle' + (soundOn       ? ' on' : '');
+  document.getElementById('badgeToggle').className     = 'toggle' + (showChannelBadge ? ' on' : '');
+  document.getElementById('rrToggle').className        = 'toggle' + (showRR        ? ' on' : '');
   const bar = document.getElementById('refreshBar');
   bar.style.animation = 'none'; bar.offsetHeight;
   bar.style.animation = `shrink ${refreshSec}s linear infinite`;
@@ -527,26 +535,28 @@ function setRefreshInterval(sec) {
   refreshInterval = setInterval(fetchAll, refreshSec * 1000);
   showToast(`Refresh: ${sec}s`, 'gold');
 }
-function setTheme(t) { currentTheme = t; saveSettings(); applySettings(); showToast(t + ' theme'); }
-function setFontSize(s) { currentFontSize = s; saveSettings(); applySettings(); showToast('Font: ' + s); }
+function setTheme(t)    { currentTheme = t;     saveSettings(); applySettings(); showToast(t + ' theme'); }
+function setFontSize(s) { currentFontSize = s;  saveSettings(); applySettings(); showToast('Font: ' + s); }
 function toggleCompactMode() {
   compactMode = !compactMode; saveSettings(); applySettings();
   allSignals.forEach((sigs, i) => renderChannelPage(i, sigs, []));
   renderLivePage(); renderStarredPage(); renderHistory();
   showToast(compactMode ? 'Compact ON' : 'Compact OFF');
 }
-function toggleFVOnly() { fvOnlyAlerts = !fvOnlyAlerts; saveSettings(); applySettings(); showToast(fvOnlyAlerts ? 'FV Only Alerts ON' : 'All Alerts ON'); }
-function testSound() { playBeep('tp'); showToast('🔊 Test sound'); }
+function toggleFVOnly() {
+  fvOnlyAlerts = !fvOnlyAlerts; saveSettings(); applySettings();
+  showToast(fvOnlyAlerts ? 'FV Only Alerts ON' : 'All Alerts ON');
+}
+function testSound()        { playBeep('tp'); showToast('🔊 Test sound'); }
 function testNotification() {
   if (Notification.permission === 'granted') { new Notification('Test', { body: 'TradeSignal Pro test alert' }); showToast('✅ Test sent'); }
   else showToast('Enable notifications first', 'red');
 }
 function clearHistory() {
   if (confirm('Clear all trade history?')) {
-    closedHistory = [];
-    saveHistory();
-    allSignals = [[], [], []];
-    saveSignals();
+    closedHistory = []; saveHistory();
+    allSignals = [[], [], []]; saveSignals();
+    seenMsgKeys = new Set(); saveSeenMsgs();
     renderLivePage(); renderStarredPage(); renderHistory(); updateDataStats();
     showToast('History cleared');
   }
@@ -561,12 +571,12 @@ function resetAllSettings() {
     showToast('Settings reset');
   }
 }
-function checkForUpdates() { showToast('Latest version v3.4', 'gold'); }
+function checkForUpdates() { showToast('Latest version v3.5', 'gold'); }
 function updateDataStats() {
   let total = 0, open = 0, closed = closedHistory.length;
-  allSignals.forEach(sigs => { total += sigs.length; open += sigs.filter(s=>!s.hitType).length; });
+  allSignals.forEach(sigs => { total += sigs.length; open += sigs.filter(s => !s.hitType).length; });
   document.getElementById('totalSignalsCount').textContent = total + closed;
-  document.getElementById('openTradesCount').textContent = open;
+  document.getElementById('openTradesCount').textContent   = open;
   document.getElementById('closedTradesCount').textContent = closed;
 }
 
@@ -581,7 +591,7 @@ function toggleFvSymbol(sym, event) {
   if (event) event.stopPropagation();
   const s = sym.toUpperCase();
   if (fvSymbols.has(s)) { fvSymbols.delete(s); saveFvSet(); showToast('Removed: ' + s, 'red'); }
-  else { fvSymbols.add(s); saveFvSet(); showToast('⭐ FV Added: ' + s, 'gold'); }
+  else                  { fvSymbols.add(s);    saveFvSet(); showToast('⭐ FV Added: ' + s, 'gold'); }
   updateFvStarCount();
   allSignals.forEach((sigs, i) => renderChannelPage(i, sigs, []));
   renderLivePage(); renderStarredPage();
@@ -593,7 +603,7 @@ function clearAllFvSymbols() {
   renderLivePage(); renderStarredPage();
 }
 function updateFvStarCount() {
-  const n = fvSymbols.size;
+  const n  = fvSymbols.size;
   const el = document.getElementById('navStarCount');
   if (el) { el.textContent = n; el.className = 'nav-star-count' + (n > 0 ? ' show' : ''); }
   document.getElementById('cnt4').textContent = n || '0';
@@ -602,9 +612,9 @@ function updateFvStarCount() {
 // ── HAPTIC & AUDIO ────────────────────────────────────────────────────────────
 function vibrate(type) {
   if (!navigator.vibrate) return;
-  if (type === 'tp') navigator.vibrate([100,50,100,50,300]);
-  else if (type === 'sl') navigator.vibrate([300,100,300]);
-  else navigator.vibrate([100,50,100]);
+  if      (type === 'tp')  navigator.vibrate([100,50,100,50,300]);
+  else if (type === 'sl')  navigator.vibrate([300,100,300]);
+  else                     navigator.vibrate([100,50,100]);
 }
 const AudioCtx = window.AudioContext || window.webkitAudioContext;
 let audioCtx = null;
@@ -613,7 +623,7 @@ function unlockAudio() {
   if (audioCtx.state === 'suspended') audioCtx.resume();
 }
 document.addEventListener('touchstart', unlockAudio, { once: true });
-document.addEventListener('click', unlockAudio, { once: true });
+document.addEventListener('click',      unlockAudio, { once: true });
 function playBeep(type) {
   vibrate(type);
   if (!soundOn) return;
@@ -629,9 +639,9 @@ function playBeep(type) {
       g.gain.exponentialRampToValueAtTime(0.001, t+start+dur);
       o.start(t+start); o.stop(t+start+dur);
     }
-    if (type === 'tp') { beep(660,0,0.15); beep(880,0.2,0.15); beep(1100,0.4,0.25); }
-    else if (type === 'sl') { beep(440,0,0.18); beep(330,0.25,0.18); beep(220,0.5,0.25); }
-    else { beep(880,0,0.1); beep(880,0.15,0.1); beep(1100,0.3,0.15); }
+    if      (type === 'tp')  { beep(660,0,0.15); beep(880,0.2,0.15); beep(1100,0.4,0.25); }
+    else if (type === 'sl')  { beep(440,0,0.18); beep(330,0.25,0.18); beep(220,0.5,0.25); }
+    else                     { beep(880,0,0.1);  beep(880,0.15,0.1); beep(1100,0.3,0.15); }
   } catch(e) {}
 }
 function toggleSound() { soundOn = !soundOn; saveSettings(); applySettings(); showToast(soundOn ? 'SOUND ON' : 'SOUND OFF'); }
@@ -649,7 +659,7 @@ function toggleRR() {
 }
 function toggleTPAlert() {
   const toggle = document.getElementById('tpAlertToggle');
-  const isOn = toggle.classList.contains('on');
+  const isOn   = toggle.classList.contains('on');
   toggle.classList.toggle('on', !isOn);
   showToast(isOn ? 'TP/SL Alerts OFF' : 'TP/SL Alerts ON');
 }
@@ -663,30 +673,23 @@ async function registerSW() {
 async function requestNotificationPermission() {
   if (!('Notification' in window)) return false;
   if (Notification.permission === 'granted') return true;
-  if (Notification.permission === 'denied') return false;
+  if (Notification.permission === 'denied')  return false;
   return (await Notification.requestPermission()) === 'granted';
 }
 function sendNotification(alertType, pair, pnl, dir, entry) {
   if (Notification.permission !== 'granted') return;
   let title, body;
-  if (alertType === 'tp') {
-    title = '🎯 TP HIT — ' + (pair || '');
-    body = (pnl != null ? '+$' + Math.abs(pnl).toFixed(2) + ' Profit' : 'Take Profit reached!');
-  } else if (alertType === 'sl') {
-    title = '❌ SL HIT — ' + (pair || '');
-    body = (pnl != null ? '-$' + Math.abs(pnl).toFixed(2) + ' Loss' : 'Stop Loss triggered');
-  } else {
-    title = '📡 New Signal — ' + (pair || '');
-    body = (dir ? dir.toUpperCase() : '') + ' · Entry: ' + (entry || '');
-  }
+  if      (alertType === 'tp')  { title = '🎯 TP HIT — ' + (pair||'');  body = pnl != null ? '+$'+Math.abs(pnl).toFixed(2)+' Profit' : 'Take Profit reached!'; }
+  else if (alertType === 'sl')  { title = '❌ SL HIT — ' + (pair||'');  body = pnl != null ? '-$'+Math.abs(pnl).toFixed(2)+' Loss'   : 'Stop Loss triggered';  }
+  else                          { title = '📡 New Signal — '+(pair||''); body = (dir?dir.toUpperCase():'')+' · Entry: '+(entry||''); }
   try { new Notification(title, { body, icon: '/icon-192.png', badge: '/icon-192.png' }); } catch(e) {}
 }
 function enableNotifications() {
   requestNotificationPermission().then(granted => {
     if (granted) {
       showToast('✅ Notifications ON');
-      document.getElementById('notifStatus').textContent = 'ENABLED';
-      document.getElementById('notifStatus').style.color = 'var(--green)';
+      document.getElementById('notifStatus').textContent  = 'ENABLED';
+      document.getElementById('notifStatus').style.color  = 'var(--green)';
       document.getElementById('notifToggle').classList.add('on');
     } else showToast('Browser settings mein allow karo', 'red');
   });
@@ -697,7 +700,7 @@ function addBellAlert(type, text, pair, ts, pnl, dir, entry) {
   const tpAlertToggle = document.getElementById('tpAlertToggle');
   if (tpAlertToggle && !tpAlertToggle.classList.contains('on')) return;
   if (fvOnlyAlerts && pair && !fvSymbols.has(pair.toUpperCase())) return;
-  const aid = ts + '_' + type + '_' + (pair || '');
+  const aid = ts + '_' + type + '_' + (pair||'');
   if (seenAlertIds.has(aid)) return;
   seenAlertIds.add(aid);
   bellAlerts.unshift({ type, text, pair, ts, pnl });
@@ -709,37 +712,35 @@ function addBellAlert(type, text, pair, ts, pnl, dir, entry) {
   const btn = document.getElementById('bellBtn');
   btn.classList.add('bell-active');
   setTimeout(() => btn.classList.remove('bell-active'), 600);
-  let toastMsg = '';
-  if (type === 'tp') {
-    toastMsg = '🎯 TP HIT' + (pair ? ' · ' + pair : '') + (pnl != null ? ' · +$' + Math.abs(pnl).toFixed(2) : '');
-  } else {
-    toastMsg = '❌ SL HIT' + (pair ? ' · ' + pair : '') + (pnl != null ? ' · -$' + Math.abs(pnl).toFixed(2) : '');
-  }
+  const toastMsg = type === 'tp'
+    ? '🎯 TP HIT' + (pair?' · '+pair:'') + (pnl!=null?' · +$'+Math.abs(pnl).toFixed(2):'')
+    : '❌ SL HIT' + (pair?' · '+pair:'') + (pnl!=null?' · -$'+Math.abs(pnl).toFixed(2):'');
   showToast(toastMsg, type === 'tp' ? 'gold' : 'red');
   renderBellPanel();
 }
 function updateBellBadge() {
   const b = document.getElementById('bellBadge');
   b.textContent = bellUnread > 99 ? '99+' : bellUnread;
-  b.className = 'bell-badge' + (bellUnread > 0 ? ' show' : '');
+  b.className   = 'bell-badge' + (bellUnread > 0 ? ' show' : '');
 }
 function toggleBellPanel() {
   bellPanelOpen = !bellPanelOpen;
   document.getElementById('bellPanel').className = 'bell-panel' + (bellPanelOpen ? ' open' : '');
   if (bellPanelOpen) { bellUnread = 0; updateBellBadge(); }
 }
-function clearBellAlerts() { bellAlerts = []; bellUnread = 0; updateBellBadge(); renderBellPanel(); }
-function renderBellPanel() {
+function clearBellAlerts()  { bellAlerts = []; bellUnread = 0; updateBellBadge(); renderBellPanel(); }
+function renderBellPanel()  {
   const list = document.getElementById('bellList');
   if (!bellAlerts.length) { list.innerHTML = '<div class="bell-empty">// NO ALERTS YET</div>'; return; }
   list.innerHTML = bellAlerts.map(a => {
     const pnlStr = a.pnl != null
-      ? (a.type === 'tp' ? ` · <span style="color:var(--green)">+$${Math.abs(a.pnl).toFixed(2)}</span>` : ` · <span style="color:var(--red)">-$${Math.abs(a.pnl).toFixed(2)}</span>`)
+      ? (a.type === 'tp' ? ` · <span style="color:var(--green)">+$${Math.abs(a.pnl).toFixed(2)}</span>`
+                         : ` · <span style="color:var(--red)">-$${Math.abs(a.pnl).toFixed(2)}</span>`)
       : '';
     return `<div class="bell-item">
       <div class="bell-item-icon">${a.type === 'tp' ? '🎯' : '❌'}</div>
       <div class="bell-item-body">
-        <div class="bell-item-title ${a.type}">${a.type === 'tp' ? 'TP HIT' : 'SL HIT'}${a.pair ? ' · ' + a.pair : ''}${pnlStr}</div>
+        <div class="bell-item-title ${a.type}">${a.type==='tp'?'TP HIT':'SL HIT'}${a.pair?' · '+a.pair:''}${pnlStr}</div>
         <div class="bell-item-sub">${timeAgo(a.ts)} · ${fmtTime(a.ts)}</div>
       </div>
     </div>`;
@@ -747,38 +748,85 @@ function renderBellPanel() {
 }
 
 // ── PARSE ─────────────────────────────────────────────────────────────────────
+/*
+  FIX 1 — parseTPSL: handle all these real Telegram formats:
+    "TP HIT : XAUUSD\nProfit : +$42.06"
+    "TP HIT : XAUUSD"
+    "SL HIT : XAUUSD\nLoss : -$20.00"
+    "🎯 TP REACHED"
+    "❌ SL HIT"
+*/
 function parseTPSL(text) {
   if (!text) return null;
   const t = text.toUpperCase();
   let type = null;
-  if (/TP\s*[12]?\s*(HIT|REACHED|DONE)|TARGET\s*(HIT|REACHED)|🎯/.test(t)) type = 'tp';
-  else if (/SL\s*(HIT|REACHED|TRIGGERED)|STOP\s*LOSS\s*(HIT|TRIGGERED)|STOPPED\s*OUT|❌/.test(t)) type = 'sl';
+
+  // TP patterns — including "TP HIT : XAUUSD" format
+  if (/TP\s*HIT|TP\s*REACHED|TP\s*DONE|TARGET\s*(HIT|REACHED)|🎯/.test(t)) type = 'tp';
+  // SL patterns
+  else if (/SL\s*HIT|SL\s*REACHED|SL\s*TRIGGERED|STOP\s*LOSS\s*(HIT|TRIGGERED)|STOPPED\s*OUT|❌/.test(t)) type = 'sl';
+
   if (!type) return null;
+
   let pnl = null;
-  const profitMatch = text.match(/(?:Profit|Reward)\s*[:\-·]\s*[+]?\$?\s*([0-9]+(?:\.[0-9]+)?)/i);
-  if (profitMatch) { pnl = parseFloat(profitMatch[1]); if (type === 'tp') pnl = Math.abs(pnl); }
-  const lossMatch = text.match(/(?:Loss|Risk)\s*[:\-·]\s*[-]?\$?\s*([0-9]+(?:\.[0-9]+)?)/i);
-  if (lossMatch) { pnl = parseFloat(lossMatch[1]); if (type === 'sl') pnl = -Math.abs(pnl); }
-  if (pnl === null) {
-    const dollarMatch = text.match(/\$?\s*([0-9]+(?:\.[0-9]+)?)/);
-    if (dollarMatch) { pnl = parseFloat(dollarMatch[1]); if (type === 'sl') pnl = -Math.abs(pnl); }
+  // "Profit : +$42.06" or "Profit : 42.06"
+  const profitMatch = text.match(/Profit\s*[:\-·]\s*[+]?\$?\s*([0-9]+(?:\.[0-9]+)?)/i);
+  if (profitMatch) pnl = Math.abs(parseFloat(profitMatch[1]));
+
+  // "Loss : -$20.00" or "Loss : 20.00"
+  const lossMatch = text.match(/Loss\s*[:\-·]\s*[-]?\$?\s*([0-9]+(?:\.[0-9]+)?)/i);
+  if (lossMatch) {
+    pnl = type === 'sl' ? -Math.abs(parseFloat(lossMatch[1])) : Math.abs(parseFloat(lossMatch[1]));
   }
+
+  // Fallback: any dollar amount
+  if (pnl === null) {
+    const dollarMatch = text.match(/[+\-]?\$?\s*([0-9]+(?:\.[0-9]+)?)/);
+    if (dollarMatch) {
+      pnl = parseFloat(dollarMatch[1]);
+      if (type === 'sl') pnl = -Math.abs(pnl);
+    }
+  }
+
   return { type, pnl };
+}
+
+/*
+  FIX 2 — extractPairFromTPSL: handle "TP HIT : XAUUSD" format
+*/
+function extractPairFromTPSL(text) {
+  if (!text) return null;
+  const t = text.toUpperCase();
+
+  // "TP HIT : XAUUSD" or "SL HIT : XAUUSD"
+  let m = t.match(/(?:TP|SL)\s*HIT\s*[:\-·]\s*([A-Z]{3,8})/);
+  if (m) return m[1].replace(/[\/\.]/g, '');
+
+  // "TP HIT XAUUSD" (no colon)
+  m = t.match(/(?:TP|SL)\s*(?:HIT|REACHED|TRIGGERED)\s+([A-Z]{3,8})/);
+  if (m) return m[1].replace(/[\/\.]/g, '');
+
+  // Any 6-char forex pair or XXX/XXX
+  m = t.match(/\b([A-Z]{3}[\/\.]?[A-Z]{3})\b/) || t.match(/\b([A-Z]{6})\b/);
+  return m ? m[1].replace(/[\/\.]/g, '') : null;
 }
 
 function parseSignal(text) {
   if (!text) return null;
   const t = text.toUpperCase();
   let dir = null;
-  if (/\bBUY\b/.test(t)) dir = 'buy';
+  if      (/\bBUY\b/.test(t))  dir = 'buy';
   else if (/\bSELL\b/.test(t)) dir = 'sell';
+
   const pm = text.match(/\b([A-Z]{3}[\/\.]?[A-Z]{3})\b/i) || text.match(/\b([A-Z]{6})\b/);
-  const pair = pm ? pm[1].toUpperCase().replace(/[\/\.]/g, '') : null;
+  const pair  = pm  ? pm[1].toUpperCase().replace(/[\/\.]/g, '') : null;
   const em = text.match(/(?:ENTRY|PRICE|@)\s*[:\-]?\s*([0-9]+\.?[0-9]*)/i);
   const sm = text.match(/(?:SL|STOP[- ]?LOSS)\s*[:\-]?\s*([0-9]+\.?[0-9]*)/i);
   const tm = text.match(/(?:TP\s*[12]?|TAKE[- ]?PROFIT\s*[12]?)\s*[:\-]?\s*([0-9]+\.?[0-9]*)/i);
   const entry = em ? em[1] : null, sl = sm ? sm[1] : null, tp = tm ? tm[1] : null;
+
   if (!dir && !pair) return null;
+
   let rr = null;
   if (entry && sl && tp && showRR) {
     const e = parseFloat(entry), sv = parseFloat(sl), t2 = parseFloat(tp);
@@ -788,56 +836,50 @@ function parseSignal(text) {
   return { dir, pair, entry, sl, tp, rr };
 }
 
-function extractPairFromTPSL(text) {
-  if (!text) return null;
-  let m = text.match(/(?:TP|SL)\s*(?:HIT|REACHED|TRIGGERED)\s*[:\-·]\s*([A-Z]{3,8})/i);
-  if (m) return m[1].toUpperCase().replace(/[\/\.]/g, '');
-  m = text.match(/(?:TP|SL)\s*(?:HIT|REACHED|TRIGGERED)\s+([A-Z]{3,8})/i);
-  if (m) return m[1].toUpperCase().replace(/[\/\.]/g, '');
-  m = text.match(/\b([A-Z]{3}[\/\.]?[A-Z]{3})\b/i) || text.match(/\b([A-Z]{6})\b/);
-  return m ? m[1].toUpperCase().replace(/[\/\.]/g, '') : null;
-}
-
 function timeAgo(unix) {
   const m = Math.floor((Date.now() - unix * 1000) / 60000);
-  if (m < 1) return 'Just now';
+  if (m < 1)  return 'Just now';
   if (m < 60) return m + ' min ago';
   const h = Math.floor(m / 60);
   if (h < 24) return h + ' hr ago';
   return Math.floor(h / 24) + 'd ago';
 }
 function fmtTime(unix) {
-  return new Date(unix * 1000).toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit' });
+  return new Date(unix * 1000).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
 }
 
 // ── RENDER FUNCTIONS ──────────────────────────────────────────────────────────
 function renderCard(s, showCh, histMode, showFvBtn = true) {
-  const id = 'c' + (_uid++);
+  const id      = 'c' + (_uid++);
   const isFvSym = s.pair && fvSymbols.has(s.pair.toUpperCase());
-  const emoji = s.dir === 'buy' ? '🟢' : '🔴';
-  const dirL = s.dir === 'buy' ? 'BUY' : 'SELL';
+  const emoji   = s.dir === 'buy' ? '🟢' : '🔴';
+  const dirL    = s.dir === 'buy' ? 'BUY' : 'SELL';
   const newPill = s.isNew && !histMode ? '<span class="new-pill">NEW</span>' : '';
   const chBadge = showCh && showChannelBadge && s.ch ? `<span class="ch-badge">${s.ch}</span>` : '';
   const fvBtnHtml = showFvBtn && s.pair
-    ? `<button class="fv-btn${isFvSym?' active':''}" onclick="toggleFvSymbol('${s.pair}',event)">${isFvSym?'⭐':'☆'}</button>` : '';
+    ? `<button class="fv-btn${isFvSym?' active':''}" onclick="toggleFvSymbol('${s.pair}',event)">${isFvSym?'⭐':'☆'}</button>`
+    : '';
+
   let statusBadge = '', hitBanner = '', hitCls = '';
   if (s.hitType === 'tp') {
-    const amtStr = s.pnl != null ? ` +$${Math.abs(s.pnl).toFixed(2)}` : '';
-    statusBadge = `<span class="hit-badge win">✅ TP HIT${amtStr}</span>`;
-    const bannerAmt = s.pnl != null ? ` · +$${Math.abs(s.pnl).toFixed(2)}` : '';
-    hitBanner = `<div class="hit-banner tp">🎯 TAKE PROFIT HIT${bannerAmt}</div>`;
-    hitCls = 'tp-hit';
+    const amtStr   = s.pnl != null ? ` +$${Math.abs(s.pnl).toFixed(2)}` : '';
+    statusBadge    = `<span class="hit-badge win">✅ TP HIT${amtStr}</span>`;
+    const bannerAmt= s.pnl != null ? ` · +$${Math.abs(s.pnl).toFixed(2)}` : '';
+    hitBanner      = `<div class="hit-banner tp">🎯 TAKE PROFIT HIT${bannerAmt}</div>`;
+    hitCls         = 'tp-hit';
   } else if (s.hitType === 'sl') {
-    const amtStr = s.pnl != null ? ` -$${Math.abs(s.pnl).toFixed(2)}` : '';
-    statusBadge = `<span class="hit-badge loss">❌ SL HIT${amtStr}</span>`;
-    const bannerAmt = s.pnl != null ? ` · -$${Math.abs(s.pnl).toFixed(2)}` : '';
-    hitBanner = `<div class="hit-banner sl">❌ STOP LOSS HIT${bannerAmt}</div>`;
-    hitCls = 'sl-hit';
+    const amtStr   = s.pnl != null ? ` -$${Math.abs(s.pnl).toFixed(2)}` : '';
+    statusBadge    = `<span class="hit-badge loss">❌ SL HIT${amtStr}</span>`;
+    const bannerAmt= s.pnl != null ? ` · -$${Math.abs(s.pnl).toFixed(2)}` : '';
+    hitBanner      = `<div class="hit-banner sl">❌ STOP LOSS HIT${bannerAmt}</div>`;
+    hitCls         = 'sl-hit';
   } else if (histMode) {
-    statusBadge = '<span class="hit-badge open">OPEN</span>';
+    statusBadge    = '<span class="hit-badge open">OPEN</span>';
   }
-  const fvCls = isFvSym ? 'fv-sym' : '';
+
+  const fvCls     = isFvSym ? 'fv-sym' : '';
   const rrDisplay = (s.rr && showRR) ? s.rr : '—';
+
   return `<div class="sig-card ${s.dir||''} ${hitCls} ${fvCls}" id="${id}" onclick="toggleCard('${id}')">
   ${hitBanner}
   <div class="card-collapsed">
@@ -877,41 +919,46 @@ function renderCard(s, showCh, histMode, showFvBtn = true) {
 </div>`;
 }
 
-function toggleCard(id) { const el=document.getElementById(id); if(el) el.classList.toggle('expanded'); }
+function toggleCard(id) { const el = document.getElementById(id); if (el) el.classList.toggle('expanded'); }
 
 function statsRow(sigs) {
-  const b=sigs.filter(s=>s.dir==='buy').length, sl=sigs.filter(s=>s.dir==='sell').length;
-  return `<div class="stats-row"><div class="stat"><div class="stat-n">${sigs.length}</div><div class="stat-l">TOTAL</div></div><div class="stat"><div class="stat-n green">${b}</div><div class="stat-l">BUY</div></div><div class="stat"><div class="stat-n red">${sl}</div><div class="stat-l">SELL</div></div></div>`;
+  const b = sigs.filter(s => s.dir === 'buy').length;
+  const sl= sigs.filter(s => s.dir === 'sell').length;
+  return `<div class="stats-row">
+    <div class="stat"><div class="stat-n">${sigs.length}</div><div class="stat-l">TOTAL</div></div>
+    <div class="stat"><div class="stat-n green">${b}</div><div class="stat-l">BUY</div></div>
+    <div class="stat"><div class="stat-n red">${sl}</div><div class="stat-l">SELL</div></div>
+  </div>`;
 }
 
 function getWeekRange() {
-  const now=new Date(), day=now.getDay();
-  const mon=new Date(now); mon.setDate(now.getDate()-(day===0?6:day-1));
-  const sun=new Date(mon); sun.setDate(mon.getDate()+6);
-  const f=d=>d.toLocaleDateString('en-IN',{day:'2-digit',month:'short'});
-  return f(mon)+' – '+f(sun);
+  const now = new Date(), day = now.getDay();
+  const mon = new Date(now); mon.setDate(now.getDate() - (day===0?6:day-1));
+  const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+  const f = d => d.toLocaleDateString('en-IN', { day:'2-digit', month:'short' });
+  return f(mon) + ' – ' + f(sun);
 }
 function getNextSunday() {
-  const now=new Date(), diff=(7-now.getDay())%7||7;
-  const n=new Date(now); n.setDate(now.getDate()+diff);
-  return n.toLocaleDateString('en-IN',{day:'2-digit',month:'short'});
+  const now  = new Date(), diff = (7 - now.getDay()) % 7 || 7;
+  const next = new Date(now); next.setDate(now.getDate() + diff);
+  return next.toLocaleDateString('en-IN', { day:'2-digit', month:'short' });
 }
 
 function renderStarredPage() {
   const all = [];
-  allSignals.forEach((sigs,ci) => sigs.forEach(s => all.push({...s, ch:CH_LABELS[ci]})));
+  allSignals.forEach((sigs, ci) => sigs.forEach(s => all.push({...s, ch: CH_LABELS[ci]})));
   let html = '';
   if (fvSymbols.size === 0) {
     html = `<div class="empty-state"><div class="empty-icon">⭐</div><div class="empty-text">KOI FV SYMBOL NAHI<br>Kisi bhi signal card pe ☆ tap karo</div></div>`;
   } else {
     [...fvSymbols].sort().forEach(sym => {
-      const symSigs = all.filter(s => (s.pair||'').toUpperCase() === sym);
-      const openSigs = symSigs.filter(s => !s.hitType).sort((a,b) => b.ts-a.ts);
-      const closedSigs = symSigs.filter(s => s.hitType).sort((a,b) => b.ts-a.ts);
+      const symSigs    = all.filter(s => (s.pair||'').toUpperCase() === sym);
+      const openSigs   = symSigs.filter(s => !s.hitType).sort((a,b) => b.ts-a.ts);
+      const closedSigs = symSigs.filter(s =>  s.hitType).sort((a,b) => b.ts-a.ts);
       html += `<div class="sym-group"><div class="sym-group-hdr"><span class="sym-group-name">${sym}</span><div class="sym-group-meta"><span class="sym-group-count">${openSigs.length} OPEN · ${closedSigs.length} CLOSED</span><span class="sym-unstar-btn" onclick="toggleFvSymbol('${sym}',event)">✕ UNSTAR</span></div></div><div class="sym-group-body">`;
-      if (openSigs.length) { html += `<div class="section-hdr" style="margin-top:2px">OPEN (${openSigs.length})</div>`; openSigs.forEach(s=>{html+=renderCard(s,true,false,false);}); }
-      if (closedSigs.length) { html += `<div class="section-hdr dim">CLOSED (${closedSigs.length})</div>`; closedSigs.forEach(s=>{html+=renderCard(s,true,true,false);}); }
-      if (!symSigs.length) html += `<div style="font-family:var(--mono);font-size:10px;color:var(--text3);text-align:center;padding:16px 0;">No signals yet for ${sym}</div>`;
+      if (openSigs.length)   { html += `<div class="section-hdr" style="margin-top:2px">OPEN (${openSigs.length})</div>`;   openSigs.forEach(s   => { html += renderCard(s, true, false, false); }); }
+      if (closedSigs.length) { html += `<div class="section-hdr dim">CLOSED (${closedSigs.length})</div>`;                 closedSigs.forEach(s => { html += renderCard(s, true, true,  false); }); }
+      if (!symSigs.length)   html += `<div style="font-family:var(--mono);font-size:10px;color:var(--text3);text-align:center;padding:16px 0;">No signals yet for ${sym}</div>`;
       html += `</div></div>`;
     });
   }
@@ -920,7 +967,7 @@ function renderStarredPage() {
 }
 
 function renderChannelPage(chIdx, signals, raws) {
-  const page = document.getElementById('page' + (chIdx + 1));
+  const page     = document.getElementById('page' + (chIdx + 1));
   const openSigs = signals.filter(s => !s.hitType);
   document.getElementById('cnt' + (chIdx + 1)).textContent = openSigs.length || '0';
   let html = statsRow(openSigs);
@@ -935,8 +982,8 @@ function renderChannelPage(chIdx, signals, raws) {
 }
 
 function renderLivePage() {
-  const all = [];
-  allSignals.forEach((sigs,ci) => sigs.forEach(s => all.push({...s, ch:CH_LABELS[ci]})));
+  const all  = [];
+  allSignals.forEach((sigs, ci) => sigs.forEach(s => all.push({...s, ch: CH_LABELS[ci]})));
   const open = all.filter(s => !s.hitType);
   open.sort((a,b) => { if(a.isNew&&!b.isNew) return -1; if(!a.isNew&&b.isNew) return 1; return b.ts-a.ts; });
   document.getElementById('cnt0').textContent = open.length || '0';
@@ -947,14 +994,13 @@ function renderLivePage() {
 }
 
 function renderHistory() {
-  // Use permanent history store
-  const closed = [...closedHistory];
-  closed.sort((a,b) => (b.closedAt || b.ts) - (a.closedAt || a.ts));
-  const wins = closed.filter(s => s.hitType === 'tp'), losses = closed.filter(s => s.hitType === 'sl');
-  const winPct = closed.length > 0 ? Math.round(wins.length/closed.length*100) : 0;
-  const net = closed.reduce((acc,s) => acc + (s.pnl||0), 0);
-  const netStr = (net>=0 ? '+$' : '-$') + Math.abs(net).toFixed(2);
-  const pnlCls = net >= 0 ? 'pnl-pos' : 'pnl-neg';
+  const closed   = [...closedHistory].sort((a,b) => (b.closedAt||b.ts) - (a.closedAt||a.ts));
+  const wins     = closed.filter(s => s.hitType === 'tp');
+  const losses   = closed.filter(s => s.hitType === 'sl');
+  const winPct   = closed.length > 0 ? Math.round(wins.length / closed.length * 100) : 0;
+  const net      = closed.reduce((acc, s) => acc + (s.pnl || 0), 0);
+  const netStr   = (net >= 0 ? '+$' : '-$') + Math.abs(net).toFixed(2);
+  const pnlCls   = net >= 0 ? 'pnl-pos' : 'pnl-neg';
   document.getElementById('histStatsHdr').innerHTML = `
     <div class="hist-stats-header">
       <div class="hist-week-label"><span>// WEEK: ${getWeekRange()}</span><span class="hist-reset-info">🔄 Resets ${getNextSunday()}</span></div>
@@ -971,113 +1017,132 @@ function renderHistory() {
     : `<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">NO HISTORY</div></div>`;
 }
 
-// ── FETCH (FIXED — With permanent history) ─────────────────────────────────
+// ── FETCH (ALL 3 BUGS FIXED) ──────────────────────────────────────────────────
 async function fetchAll() {
   const dot = document.getElementById('liveDot'), txt = document.getElementById('liveText');
   dot.style.background = 'var(--gold)'; txt.textContent = 'SYNC';
-  
+
   try {
     const fetchPromises = CHANNELS.map(async (channel, idx) => {
       try {
         const response = await fetch(PROXY_URL + channel.url);
-        const data = await response.json();
-        if (data && data.messages && data.messages.length > 0) {
-          const newSigs = [];
-          const raws = [];
-          
-          const sortedMessages = [...data.messages].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-          
-          sortedMessages.forEach(msg => {
-            const ts = msg.timestamp || Math.floor(Date.now() / 1000);
+        const data     = await response.json();
+        if (!data || !data.messages || !data.messages.length) return;
 
-            // ── Step 1: Check if this is a TP/SL notification ──
-            const tpslResult = parseTPSL(msg.text);
-            if (tpslResult) {
-              const hitPair = extractPairFromTPSL(msg.text);
-              const matchSignal = allSignals[idx].find(s => !s.hitType && s.pair === hitPair);
-              
-              if (matchSignal) {
-                matchSignal.hitType = tpslResult.type;
-                matchSignal.pnl = tpslResult.pnl;
-                matchSignal.hitTs = ts;
-                matchSignal.ch = CH_LABELS[idx];
-                
-                // ✅ Add to permanent history
-                addToHistory(matchSignal);
-                
-                // ✅ Remove from open signals completely
-                allSignals[idx] = allSignals[idx].filter(s => s.id !== matchSignal.id);
-                
-                addBellAlert(
-                  tpslResult.type, msg.text, matchSignal.pair, ts,
-                  tpslResult.pnl, matchSignal.dir, matchSignal.entry
-                );
-              } else {
-                raws.push({ text: msg.text, ts });
-              }
-              return;
-            }
+        const raws = [];
+        const sortedMessages = [...data.messages].sort((a,b) => (a.timestamp||0) - (b.timestamp||0));
 
-            // ── Step 2: Try to parse as new signal ──
-            const parsed = parseSignal(msg.text);
-            if (parsed && parsed.dir && parsed.pair) {
-              // Check if already exists in open signals or history
-              const existsInOpen = allSignals[idx].some(s =>
-                s.pair === parsed.pair && s.dir === parsed.dir && !s.hitType
+        sortedMessages.forEach(msg => {
+          const ts  = msg.timestamp || Math.floor(Date.now() / 1000);
+          const key = msgKey(ts, msg.text);
+
+          // ── FIX 3: Skip already-processed messages ──────────────────────
+          // This is the main reason signals disappear:
+          // Every fetch re-processes ALL messages from the channel cache.
+          // Without this check, old signals get re-matched and removed again.
+          if (seenMsgKeys.has(key)) return;
+          // Mark as seen FIRST before processing
+          seenMsgKeys.add(key);
+
+          // ── Step 1: TP/SL detection ──────────────────────────────────────
+          const tpslResult = parseTPSL(msg.text);
+          if (tpslResult) {
+            const hitPair = extractPairFromTPSL(msg.text);
+
+            // Find the open signal for this pair in this channel
+            const matchSignal = allSignals[idx].find(s =>
+              !s.hitType && s.pair && hitPair &&
+              s.pair.toUpperCase() === hitPair.toUpperCase()
+            );
+
+            if (matchSignal) {
+              // Clone signal with hit info for history
+              const closedSig = {
+                ...matchSignal,
+                hitType : tpslResult.type,
+                pnl     : tpslResult.pnl,
+                hitTs   : ts,
+                ch      : CH_LABELS[idx]
+              };
+              addToHistory(closedSig);
+
+              // ── FIX: Remove from open signals ──
+              allSignals[idx] = allSignals[idx].filter(s => s.id !== matchSignal.id);
+
+              addBellAlert(
+                tpslResult.type, msg.text,
+                matchSignal.pair, ts,
+                tpslResult.pnl, matchSignal.dir, matchSignal.entry
               );
-              const existsInHistory = closedHistory.some(s =>
-                s.pair === parsed.pair && s.dir === parsed.dir
-              );
-              
-              if (!existsInOpen && !existsInHistory) {
-                newSigs.push({
-                  ...parsed, ts, id: Date.now() + Math.random(),
-                  isNew: true, hitType: null, pnl: null,
-                  rawText: msg.text, ch: CH_LABELS[idx]
-                });
-                playBeep('new');
-              }
-            } else {
-              raws.push({ text: msg.text, ts });
             }
+            // Even if no match found, TP/SL message is NOT shown in raws
+            return;
+          }
+
+          // ── Step 2: New signal detection ────────────────────────────────
+          const parsed = parseSignal(msg.text);
+          if (parsed && parsed.dir && parsed.pair) {
+            // FIX: Only block if ALREADY OPEN for same pair+dir
+            // ❌ OLD (wrong): also checked history — this caused "disappear" bug
+            const existsInOpen = allSignals[idx].some(s =>
+              s.pair === parsed.pair && s.dir === parsed.dir && !s.hitType
+            );
+
+            if (!existsInOpen) {
+              allSignals[idx].push({
+                ...parsed,
+                ts,
+                id     : ts + '_' + parsed.pair + '_' + parsed.dir + '_' + idx,
+                isNew  : true,
+                hitType: null,
+                pnl    : null,
+                rawText: msg.text,
+                ch     : CH_LABELS[idx]
+              });
+              playBeep('new');
+              sendNotification('new', parsed.pair, null, parsed.dir, parsed.entry);
+            }
+          } else {
+            raws.push({ text: msg.text, ts });
+          }
+        });
+
+        // Remove duplicates (pair+dir), keep newest
+        const seen = new Set();
+        const unique = [];
+        allSignals[idx]
+          .sort((a,b) => b.ts - a.ts)
+          .forEach(s => {
+            const k = `${s.pair}_${s.dir}`;
+            if (!seen.has(k)) { seen.add(k); unique.push(s); }
           });
-          
-          const existingOpen = allSignals[idx].filter(s => !s.hitType);
-          const allCurrent = [...newSigs, ...existingOpen];
-          
-          const seen = new Set();
-          const unique = [];
-          allCurrent.forEach(s => {
-            const key = `${s.pair}_${s.dir}`;
-            if (!seen.has(key)) { seen.add(key); unique.push(s); }
-          });
-          unique.sort((a,b) => b.ts - a.ts);
-          
-          allSignals[idx] = unique;
-          renderChannelPage(idx, allSignals[idx], raws);
-        }
+        allSignals[idx] = unique;
+
+        renderChannelPage(idx, allSignals[idx], raws);
       } catch(err) {
         console.error(`Error fetching ${channel.name}:`, err);
       }
     });
-    
+
     await Promise.all(fetchPromises);
-    
+
     saveSignals();
+    saveSeenMsgs();
     renderLivePage(); renderStarredPage(); renderHistory(); updateDataStats();
-    
+
+    // Clear isNew flag after 5s
     setTimeout(() => {
-      allSignals.forEach((sigs,i) => { sigs.forEach(s => { if(s.isNew) s.isNew=false; }); renderChannelPage(i, sigs, []); });
+      allSignals.forEach((sigs, i) => { sigs.forEach(s => { s.isNew = false; }); renderChannelPage(i, sigs, []); });
       renderLivePage();
     }, 5000);
-    
+
     document.getElementById('lastSyncedTime').textContent = new Date().toLocaleTimeString();
-    
+
   } catch(err) {
     console.error('Fetch error:', err);
     showToast('Connection error', 'red');
   }
-  
+
   dot.style.background = 'var(--green)'; txt.textContent = 'LIVE';
   const bar = document.getElementById('refreshBar');
   bar.style.animation = 'none'; bar.offsetHeight;
@@ -1087,10 +1152,10 @@ async function fetchAll() {
 // ── SWIPE ─────────────────────────────────────────────────────────────────────
 let txS=0, tyS=0, ttS=0, swiping=false, swIndTimer=null;
 const wrapper = document.getElementById('pagesWrapper');
-const swInd = document.getElementById('swipeIndicator');
+const swInd   = document.getElementById('swipeIndicator');
 function setTabOffset(i, instant=false) {
   wrapper.style.transition = instant ? 'none' : 'transform 0.3s cubic-bezier(0.4,0,0.2,1)';
-  wrapper.style.transform = `translateX(-${i * 100}%)`;
+  wrapper.style.transform  = `translateX(-${i * 100}%)`;
 }
 function showSwipeHint(lbl) {
   swInd.textContent = lbl; swInd.classList.add('show');
@@ -1098,52 +1163,78 @@ function showSwipeHint(lbl) {
 }
 const mc = document.getElementById('mainContent');
 mc.addEventListener('touchstart', e => { if(currentNav!=='signals') return; txS=e.touches[0].clientX; tyS=e.touches[0].clientY; ttS=Date.now(); swiping=false; }, {passive:true});
-mc.addEventListener('touchmove', e => { if(currentNav!=='signals') return; const dx=e.touches[0].clientX-txS, dy=e.touches[0].clientY-tyS; if(!swiping&&Math.abs(dx)>Math.abs(dy)&&Math.abs(dx)>8) swiping=true; }, {passive:true});
-mc.addEventListener('touchend', e => {
-  if(currentNav!=='signals'||!swiping) return;
+mc.addEventListener('touchmove',  e => { if(currentNav!=='signals') return; const dx=e.touches[0].clientX-txS, dy=e.touches[0].clientY-tyS; if(!swiping&&Math.abs(dx)>Math.abs(dy)&&Math.abs(dx)>8) swiping=true; }, {passive:true});
+mc.addEventListener('touchend',   e => {
+  if (currentNav!=='signals'||!swiping) return;
   const dx=e.changedTouches[0].clientX-txS, dt=Date.now()-ttS;
-  if((dt<400||Math.abs(dx)>50)&&Math.abs(dx)>35) {
-    if(dx<-35&&currentTab<TAB_COUNT-1) { switchTab(currentTab+1); showSwipeHint(TAB_LABELS[currentTab]); }
-    else if(dx>35&&currentTab>0) { switchTab(currentTab-1); showSwipeHint(TAB_LABELS[currentTab]); }
+  if ((dt<400||Math.abs(dx)>50)&&Math.abs(dx)>35) {
+    if (dx<-35&&currentTab<TAB_COUNT-1) { switchTab(currentTab+1); showSwipeHint(TAB_LABELS[currentTab]); }
+    else if (dx>35&&currentTab>0)       { switchTab(currentTab-1); showSwipeHint(TAB_LABELS[currentTab]); }
   }
-  swiping=false;
+  swiping = false;
 }, {passive:true});
 
 // ── NAV ───────────────────────────────────────────────────────────────────────
 function switchTab(i) {
   currentTab = i;
-  document.querySelectorAll('.tab').forEach((t,j) => t.className='tab'+(j===i?' active':''));
+  document.querySelectorAll('.tab').forEach((t,j) => t.className = 'tab' + (j===i?' active':''));
   setTabOffset(i);
 }
-function setNav(id) { document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active')); document.getElementById(id).classList.add('active'); }
+function setNav(id) { document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active')); document.getElementById(id).classList.add('active'); }
 function showPages() {
-  document.getElementById('channelTabs').style.display='flex';
-  wrapper.style.display='flex';
+  document.getElementById('channelTabs').style.display = 'flex';
+  wrapper.style.display = 'flex';
   document.getElementById('pageHistory').classList.remove('active');
   document.getElementById('pageSettings').classList.remove('active');
 }
-function goSignals() { currentNav='signals'; setNav('navSignals'); showPages(); setTabOffset(currentTab,true); if(bellPanelOpen) toggleBellPanel(); }
-function goStarredTab() { currentNav='signals'; setNav('navStarred'); showPages(); switchTab(4); if(bellPanelOpen) toggleBellPanel(); }
-function goStarredNav() { currentNav='signals'; setNav('navStarred'); showPages(); switchTab(4); if(bellPanelOpen) toggleBellPanel(); }
-function goHistory() { currentNav='history'; setNav('navHistory'); document.getElementById('channelTabs').style.display='none'; wrapper.style.display='none'; document.getElementById('pageHistory').classList.add('active'); document.getElementById('pageSettings').classList.remove('active'); renderHistory(); if(bellPanelOpen) toggleBellPanel(); }
-function goSettings() { currentNav='settings'; setNav('navSettings'); document.getElementById('channelTabs').style.display='none'; wrapper.style.display='none'; document.getElementById('pageHistory').classList.remove('active'); document.getElementById('pageSettings').classList.add('active'); if(bellPanelOpen) toggleBellPanel(); }
-function showToast(msg, type='') { const t=document.getElementById('toast'); t.textContent=msg; t.className='toast'+(type?' '+type:''); t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2800); }
+function goSignals()    { currentNav='signals';  setNav('navSignals');  showPages(); setTabOffset(currentTab,true); if(bellPanelOpen) toggleBellPanel(); }
+function goStarredTab() { currentNav='signals';  setNav('navStarred');  showPages(); switchTab(4); if(bellPanelOpen) toggleBellPanel(); }
+function goStarredNav() { currentNav='signals';  setNav('navStarred');  showPages(); switchTab(4); if(bellPanelOpen) toggleBellPanel(); }
+function goHistory()    {
+  currentNav='history'; setNav('navHistory');
+  document.getElementById('channelTabs').style.display = 'none';
+  wrapper.style.display = 'none';
+  document.getElementById('pageHistory').classList.add('active');
+  document.getElementById('pageSettings').classList.remove('active');
+  renderHistory();
+  if(bellPanelOpen) toggleBellPanel();
+}
+function goSettings()   {
+  currentNav='settings'; setNav('navSettings');
+  document.getElementById('channelTabs').style.display = 'none';
+  wrapper.style.display = 'none';
+  document.getElementById('pageHistory').classList.remove('active');
+  document.getElementById('pageSettings').classList.add('active');
+  if(bellPanelOpen) toggleBellPanel();
+}
+function showToast(msg, type='') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className   = 'toast' + (type ? ' '+type : '');
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2800);
+}
 
-setInterval(() => { document.querySelectorAll('.rel-t').forEach(el => { const ts=parseInt(el.getAttribute('data-ts')); if(ts) el.textContent=timeAgo(ts); }); }, 30000);
+setInterval(() => {
+  document.querySelectorAll('.rel-t').forEach(el => {
+    const ts = parseInt(el.getAttribute('data-ts'));
+    if (ts) el.textContent = timeAgo(ts);
+  });
+}, 30000);
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
 setTabOffset(0, true);
 registerSW();
 loadSettings();
 updateFvStarCount();
-allSignals.forEach((sigs,i) => renderChannelPage(i,sigs,[]));
+allSignals.forEach((sigs, i) => renderChannelPage(i, sigs, []));
 renderLivePage(); renderStarredPage(); renderHistory();
-if('Notification' in window && Notification.permission==='granted') {
-  const s=document.getElementById('notifStatus'), t=document.getElementById('notifToggle');
-  if(s){s.textContent='ENABLED';s.style.color='var(--green)';}
-  if(t) t.classList.add('on');
-} else if('Notification' in window && Notification.permission==='default') {
-  setTimeout(()=>Notification.requestPermission(), 2000);
+if ('Notification' in window && Notification.permission === 'granted') {
+  const s = document.getElementById('notifStatus'), t2 = document.getElementById('notifToggle');
+  if (s)  { s.textContent = 'ENABLED'; s.style.color = 'var(--green)'; }
+  if (t2) t2.classList.add('on');
+} else if ('Notification' in window && Notification.permission === 'default') {
+  setTimeout(() => Notification.requestPermission(), 2000);
 }
 fetchAll();
 refreshInterval = setInterval(fetchAll, refreshSec * 1000);
