@@ -338,7 +338,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--ui);display:flex;f
 <div class="swipe-indicator" id="swipeIndicator"></div>
 
 <script>
-const PROXY_URL  = 'https://trading-signal-2g17.onrender.com';
+const PROXY_URL  = '';
 const CH_LABELS  = ['DAILY','FVG','CRT'];
 const TAB_LABELS = ['LIVE','DAILY','FVG','CRT'];
 const REFRESH_SEC = 30;
@@ -463,12 +463,26 @@ function toggleSound() {
 }
 
 // ── TP/SL DETECT ─────────────────────────────────────────────────────────────
+// Sirf in formats ko match karo:
+// 🟢 TP HIT : XAUUSD  /  Profit : +$42.06
+// ❌ SL HIT : XAUUSD  /  Loss : -27.74
 function parseTPSL(text) {
   if (!text) return null;
   const t = text.toUpperCase();
-  if (/TP\s*[12]?\s*(HIT|REACHED|DONE)|TARGET\s*(HIT|REACHED)|🎯/.test(t)) return 'tp';
-  if (/SL\s*(HIT|REACHED|TRIGGERED)|STOP\s*LOSS\s*(HIT|TRIGGERED)|STOPPED\s*OUT|❌/.test(t)) return 'sl';
+  if (/TP\s*HIT/.test(t)) return 'tp';
+  if (/SL\s*HIT/.test(t)) return 'sl';
   return null;
+}
+
+// PnL amount extract karo TP/SL message se
+function parsePnl(text) {
+  if (!text) return null;
+  // Profit : +$42.06  ya  Loss : -27.74
+  const pm = text.match(/(?:Profit|Loss)\s*:\s*[+\-]?\$?([0-9]+\.?[0-9]*)/i);
+  if (!pm) return null;
+  const val = parseFloat(pm[1]);
+  const isLoss = /Loss/i.test(text);
+  return isLoss ? -val : val;
 }
 
 function addBellAlert(type, text, pair, ts, pnl, dir, entry) {
@@ -519,25 +533,47 @@ function renderBellPanel() {
 }
 
 // ── PARSE SIGNAL ──────────────────────────────────────────────────────────────
+// Sirf is exact format ko match karo:
+// 🟢 BUY : XAUUSD
+// Entry  : 4333.73
+// SL     : 4305.69
+// TP     : 4375.79
 function parseSignal(text) {
   if (!text) return null;
   const t = text.toUpperCase();
+
+  // TP HIT / SL HIT messages ko entry signal mat samjho
+  if (/TP\s*HIT|SL\s*HIT|PROFIT\s*:|LOSS\s*:/.test(t)) return null;
+
+  // Strict check: BUY ya SELL hona chahiye + Entry + SL + TP teeno
   let dir = null;
-  if (/\bBUY\b/.test(t))  dir = 'buy';
-  else if (/\bSELL\b/.test(t)) dir = 'sell';
-  const pm = text.match(/\b([A-Z]{3}[\/\.]?[A-Z]{3})\b/i) || text.match(/\b([A-Z]{6})\b/);
-  const pair  = pm ? pm[1].toUpperCase().replace(/[\/\.]/g,'') : null;
-  const em = text.match(/(?:ENTRY|PRICE|@)\s*[:\-]?\s*([0-9]+\.?[0-9]*)/i);
-  const sm = text.match(/(?:SL|STOP[- ]?LOSS)\s*[:\-]?\s*([0-9]+\.?[0-9]*)/i);
-  const tm = text.match(/(?:TP\s*[12]?|TAKE[- ]?PROFIT\s*[12]?)\s*[:\-]?\s*([0-9]+\.?[0-9]*)/i);
-  const entry=em?em[1]:null, sl=sm?sm[1]:null, tp=tm?tm[1]:null;
-  if (!dir && !pair) return null;
+  if (/(?:🟢|🔴)?\s*BUY\s*:/.test(t)) dir = 'buy';
+  else if (/(?:🟢|🔴)?\s*SELL\s*:/.test(t)) dir = 'sell';
+  if (!dir) return null;
+
+  // Pair extract karo (BUY : XAUUSD)
+  const pm = text.match(/(?:BUY|SELL)\s*:\s*([A-Z]{3,6})/i);
+  const pair = pm ? pm[1].toUpperCase() : null;
+  if (!pair) return null;
+
+  // Entry, SL, TP — teeno required hain
+  const em = text.match(/Entry\s*:\s*([0-9]+\.?[0-9]*)/i);
+  const sm = text.match(/SL\s*:\s*([0-9]+\.?[0-9]*)/i);
+  const tm = text.match(/TP\s*:\s*([0-9]+\.?[0-9]*)/i);
+
+  const entry = em ? em[1] : null;
+  const sl    = sm ? sm[1] : null;
+  const tp    = tm ? tm[1] : null;
+
+  // Teeno nahi hain toh ignore
+  if (!entry || !sl || !tp) return null;
+
+  // R:R calculate karo
   let rr = null;
-  if (entry && sl && tp) {
-    const e=parseFloat(entry),s=parseFloat(sl),t2=parseFloat(tp);
-    const risk=Math.abs(e-s), reward=Math.abs(t2-e);
-    if (risk>0) rr='1:'+(reward/risk).toFixed(1);
-  }
+  const e=parseFloat(entry), s=parseFloat(sl), t2=parseFloat(tp);
+  const risk=Math.abs(e-s), reward=Math.abs(t2-e);
+  if (risk > 0) rr = '1:' + (reward/risk).toFixed(1);
+
   return { dir, pair, entry, sl, tp, rr };
 }
 
@@ -766,25 +802,32 @@ async function fetchAll(){
         if(!msg)return;
         const text=msg.text||msg.caption||'';
         const id=msg.message_id,ts=msg.date;
-        const parsed=parseSignal(text);
         const isNew=!seenIds.has(id);
         const tpsl=parseTPSL(text);
-        if(tpsl&&isNew)addBellAlert(tpsl,text,parsed?.pair,ts,null,parsed?.dir,parsed?.entry);
+        const pnl=tpsl?parsePnl(text):null;
+        const parsed=parseSignal(text);
+
+        if(tpsl&&isNew){
+          // TP/SL HIT message — pair extract karo
+          const pairM=text.match(/(?:TP|SL)\s*HIT\s*:\s*([A-Z]{3,6})/i);
+          const hitPair=pairM?pairM[1].toUpperCase():(parsed?.pair||null);
+          addBellAlert(tpsl,text,hitPair,ts,pnl,null,null);
+        }
         if(parsed){
           if(isNew)newCount++;
-          signals.push({...parsed,text,ts,id,isNew,hitType:tpsl,pnl:null});
-        } else if(text.trim())raws.push({text,ts,id});
+          signals.push({...parsed,text,ts,id,isNew,hitType:tpsl,pnl});
+        }
+        // Baaki sab messages ignore — raws mein bhi mat daalo
         seenIds.add(id);
       });
       allSignals[i]=signals;
-      renderChannelPage(i,signals,raws);
+      renderChannelPage(i,signals,[]);
     });
 
     renderLivePage();
     if(newCount>0){
       playBeep('new');
       showToast(newCount+' NEW SIGNAL'+(newCount>1?'S':''));
-      // SW notification
       allSignals.forEach(sigs=>sigs.filter(s=>s.isNew).forEach(s=>sendNotification('new',s.pair,null,s.dir,s.entry)));
     }
     renderHistory();
