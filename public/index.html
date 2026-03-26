@@ -676,7 +676,6 @@ function addBellAlert(type, text, pair, ts, pnl, dir, entry) {
   const btn = document.getElementById('bellBtn');
   btn.classList.add('bell-active');
   setTimeout(() => btn.classList.remove('bell-active'), 600);
-  // Toast with actual USD amount
   let toastMsg = '';
   if (type === 'tp') {
     toastMsg = '🎯 TP HIT' + (pair ? ' · ' + pair : '') + (pnl != null ? ' · +$' + Math.abs(pnl).toFixed(2) : '');
@@ -715,25 +714,13 @@ function renderBellPanel() {
 }
 
 // ── PARSE ─────────────────────────────────────────────────────────────────────
-
-/**
- * parseTPSL — detects TP/SL hit and extracts profit/loss USD amount
- * Handles messages like:
- *   "🟢 TP HIT : XAUUSD\nProfit : +$42.06"
- *   "❌ SL HIT : EURUSD\nLoss : -$20.00"
- *   "TP1 HIT · profit +50 USD"
- */
 function parseTPSL(text) {
   if (!text) return null;
   const t = text.toUpperCase();
-
-  // Detect type
   let type = null;
   if (/TP\s*[12]?\s*(HIT|REACHED|DONE)|TARGET\s*(HIT|REACHED)|🎯/.test(t)) type = 'tp';
   else if (/SL\s*(HIT|REACHED|TRIGGERED)|STOP\s*LOSS\s*(HIT|TRIGGERED)|STOPPED\s*OUT|❌/.test(t)) type = 'sl';
   if (!type) return null;
-
-  // Extract USD amount — supports: +$42.06  -$20  +42.06 USD  Profit: 42.06  Loss: -20
   let pnl = null;
   const pnlPatterns = [
     /(?:profit|loss|pnl)\s*[:\-]?\s*[+\-]?\s*\$?\s*([0-9]+(?:\.[0-9]+)?)/i,
@@ -745,7 +732,6 @@ function parseTPSL(text) {
     const m = text.match(pat);
     if (m) {
       pnl = parseFloat(m[1]);
-      // Check sign: if original text has minus before the number, make it negative
       const rawMatch = m[0];
       if (/[-]/.test(rawMatch.replace(/[0-9.]/g, '').replace('USD','').replace('usd','').replace('$','').replace('profit','').replace('Profit',''))) {
         pnl = -Math.abs(pnl);
@@ -753,9 +739,7 @@ function parseTPSL(text) {
       break;
     }
   }
-  // For SL hits, pnl should be negative
   if (type === 'sl' && pnl != null && pnl > 0) pnl = -pnl;
-
   return { type, pnl };
 }
 
@@ -781,16 +765,10 @@ function parseSignal(text) {
   return { dir, pair, entry, sl, tp, rr };
 }
 
-/**
- * extractPairFromTPSL — extract symbol from TP/SL message
- * Handles: "TP HIT : XAUUSD" or "SL HIT: EURUSD"
- */
 function extractPairFromTPSL(text) {
   if (!text) return null;
-  // Pattern: TP HIT : XAUUSD or SL HIT : EURUSD
   const m = text.match(/(?:TP|SL)\s*(?:HIT|REACHED|TRIGGERED)\s*[:\-·]\s*([A-Z]{6})/i);
   if (m) return m[1].toUpperCase();
-  // Fallback: any 6-letter word
   const m2 = text.match(/\b([A-Z]{3}[\/\.]?[A-Z]{3})\b/i) || text.match(/\b([A-Z]{6})\b/);
   return m2 ? m2[1].toUpperCase().replace(/[\/\.]/g,'') : null;
 }
@@ -969,7 +947,7 @@ function renderHistory() {
     : `<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">NO HISTORY</div></div>`;
 }
 
-// ── FETCH (CORE LOGIC — TP/SL with exact USD amount) ──────────────────────────
+// ── FETCH (FIXED — NO TIMESTAMP FILTER, SIGNALS STAY FOREVER) ─────────────────
 async function fetchAll() {
   const dot = document.getElementById('liveDot'), txt = document.getElementById('liveText');
   dot.style.background = 'var(--gold)'; txt.textContent = 'SYNC';
@@ -981,15 +959,17 @@ async function fetchAll() {
         if (data && data.messages && data.messages.length > 0) {
           const newSigs = [];
           const raws = [];
-          data.messages.forEach(msg => {
+          
+          // Sort messages by timestamp (oldest first) to ensure proper order
+          const sortedMessages = [...data.messages].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+          
+          sortedMessages.forEach(msg => {
             const ts = msg.timestamp || Math.floor(Date.now() / 1000);
 
             // ── Step 1: Check if this is a TP/SL notification ──
             const tpslResult = parseTPSL(msg.text);
             if (tpslResult) {
-              // Extract pair from the TP/SL message itself
               const hitPair = extractPairFromTPSL(msg.text);
-              // Find matching open signal (by pair, or also try dir if available)
               const matchSignal = allSignals[idx].find(s =>
                 !s.hitType && hitPair && (s.pair||'').toUpperCase() === hitPair.toUpperCase()
               );
@@ -997,7 +977,6 @@ async function fetchAll() {
                 matchSignal.hitType = tpslResult.type;
                 matchSignal.pnl = tpslResult.pnl;
                 matchSignal.hitTs = ts;
-                // Fire bell alert with real USD amount
                 addBellAlert(
                   tpslResult.type,
                   msg.text,
@@ -1008,16 +987,14 @@ async function fetchAll() {
                   matchSignal.entry
                 );
               } else {
-                // No matching open signal — store as raw
                 raws.push({ text: msg.text, ts });
               }
-              return; // Don't process this message further as a new signal
+              return;
             }
 
             // ── Step 2: Try to parse as new signal ──
             const parsed = parseSignal(msg.text);
             if (parsed && parsed.dir && parsed.pair) {
-              // Check if already exists as open signal
               const exists = allSignals[idx].some(s =>
                 s.pair === parsed.pair && s.dir === parsed.dir && !s.hitType
               );
@@ -1042,6 +1019,7 @@ async function fetchAll() {
           // Merge new signals with existing open signals
           const existingOpen = allSignals[idx].filter(s => !s.hitType);
           const allCurrent = [...newSigs, ...existingOpen];
+          
           // Deduplicate by pair+dir
           const seen = new Set();
           const unique = [];
@@ -1050,9 +1028,10 @@ async function fetchAll() {
             if (!seen.has(key)) { seen.add(key); unique.push(s); }
           });
           unique.sort((a,b) => b.ts - a.ts);
-          // Keep all closed signals + fresh unique open signals
+          
+          // Keep all open signals (NO timestamp filter — signals stay forever!)
           const closedSigs = allSignals[idx].filter(s => s.hitType);
-          allSignals[idx] = [...unique.filter(s => (Date.now()/1000 - s.ts) < 86400), ...closedSigs];
+          allSignals[idx] = [...unique, ...closedSigs];
           saveSignals();
           renderChannelPage(idx, allSignals[idx], raws);
         }
