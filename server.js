@@ -13,8 +13,8 @@ const CHANNELS = [
 ];
 
 const DATA_FILE = path.join(__dirname, 'messages_cache.json');
+const CLOSED_FILE = path.join(__dirname, 'closed_signals.json');
 
-// ── Persistent cache load/save ────────────────────────────────────────────────
 function loadCache() {
   try {
     if (fs.existsSync(DATA_FILE)) {
@@ -26,15 +26,24 @@ function loadCache() {
   return empty;
 }
 
-function saveCache(cache) {
-  try { fs.writeFileSync(DATA_FILE, JSON.stringify(cache), 'utf8'); } catch(e) {}
+function loadClosedSignals() {
+  try {
+    if (fs.existsSync(CLOSED_FILE)) {
+      return JSON.parse(fs.readFileSync(CLOSED_FILE, 'utf8'));
+    }
+  } catch(e) {}
+  return {};
+}
+
+function saveClosedSignals(closed) {
+  try { fs.writeFileSync(CLOSED_FILE, JSON.stringify(closed), 'utf8'); } catch(e) {}
 }
 
 let messageCache = loadCache();
+let closedSignals = loadClosedSignals();
 const offsets = {};
 CHANNELS.forEach(ch => { offsets[ch.chatId] = 0; });
 
-// ── Telegram helper ───────────────────────────────────────────────────────────
 function telegramGet(token, method, params) {
   return new Promise((resolve, reject) => {
     const qs = new URLSearchParams(params).toString();
@@ -47,7 +56,36 @@ function telegramGet(token, method, params) {
   });
 }
 
-// ── Poll one channel, append to persistent cache ──────────────────────────────
+function parseSignal(text) {
+  if (!text) return null;
+  const t = text.toUpperCase();
+  let dir = null;
+  if (/\bBUY\b/.test(t)) dir = 'buy';
+  else if (/\bSELL\b/.test(t)) dir = 'sell';
+  const pm = text.match(/\b([A-Z]{3}[\/\.]?[A-Z]{3})\b/i) || text.match(/\b([A-Z]{6})\b/);
+  const pair = pm ? pm[1].toUpperCase().replace(/[\/\.]/g, '') : null;
+  if (!dir && !pair) return null;
+  return { dir, pair };
+}
+
+function parseTPSL(text) {
+  if (!text) return null;
+  const t = text.toUpperCase();
+  if (/TP\s*[12]?\s*(HIT|REACHED|DONE)|TARGET\s*(HIT|REACHED)|🎯/.test(t)) return 'tp';
+  if (/SL\s*(HIT|REACHED|TRIGGERED)|STOP\s*LOSS\s*(HIT|TRIGGERED)|STOPPED\s*OUT|❌/.test(t)) return 'sl';
+  return null;
+}
+
+function extractPairFromTPSL(text) {
+  if (!text) return null;
+  let m = text.match(/(?:TP|SL)\s*(?:HIT|REACHED|TRIGGERED)\s*[:\-·]\s*([A-Z]{3,8})/i);
+  if (m) return m[1].toUpperCase().replace(/[\/\.]/g, '');
+  m = text.match(/(?:TP|SL)\s*(?:HIT|REACHED|TRIGGERED)\s+([A-Z]{3,8})/i);
+  if (m) return m[1].toUpperCase().replace(/[\/\.]/g, '');
+  m = text.match(/\b([A-Z]{3}[\/\.]?[A-Z]{3})\b/i) || text.match(/\b([A-Z]{6})\b/);
+  return m ? m[1].toUpperCase().replace(/[\/\.]/g, '') : null;
+}
+
 async function pollChannel(channel) {
   try {
     const params = { limit: 100, timeout: 0 };
@@ -67,6 +105,23 @@ async function pollChannel(channel) {
       })
       .filter(m => m.text);
 
+    // Process TP/SL hits and mark signals as closed
+    for (const msg of newMsgs) {
+      const hitType = parseTPSL(msg.text);
+      if (hitType) {
+        const hitPair = extractPairFromTPSL(msg.text);
+        if (hitPair) {
+          if (!closedSignals[channel.chatId]) closedSignals[channel.chatId] = [];
+          const key = `${hitPair}_${hitType}`;
+          if (!closedSignals[channel.chatId].includes(key)) {
+            closedSignals[channel.chatId].push(key);
+            saveClosedSignals(closedSignals);
+            console.log(`🔒 ${channel.name}: ${hitPair} marked as ${hitType} closed`);
+          }
+        }
+      }
+    }
+
     if (newMsgs.length > 0) {
       if (!messageCache[channel.chatId]) messageCache[channel.chatId] = [];
 
@@ -84,11 +139,9 @@ async function pollChannel(channel) {
       });
 
       if (added > 0) {
-        // Sort newest first, keep last 200
         messageCache[channel.chatId].sort((a, b) => b.timestamp - a.timestamp);
         messageCache[channel.chatId] = messageCache[channel.chatId].slice(0, 200);
         saveCache(messageCache);
-        console.log(`📨 ${channel.name}: +${added} new, total=${messageCache[channel.chatId].length}`);
       }
     }
 
@@ -100,26 +153,40 @@ async function pollChannel(channel) {
   }
 }
 
+// Filter out closed signals before sending to frontend
+function filterClosedSignals(channel, messages) {
+  const closed = closedSignals[channel.chatId] || [];
+  return messages.filter(msg => {
+    const parsed = parseSignal(msg.text);
+    if (parsed && parsed.pair) {
+      const key = `${parsed.pair}_tp`; // Check if this pair was closed
+      if (closed.includes(key)) return false;
+    }
+    return true;
+  });
+}
+
 async function pollAll() {
   for (const ch of CHANNELS) await pollChannel(ch);
 }
 
-// Poll every 5 seconds
 setInterval(pollAll, 5000);
 pollAll().then(() => console.log('✅ Initial poll done'));
 
-// ── Routes ────────────────────────────────────────────────────────────────────
 app.get('/daily', (req, res) => {
   const ch = CHANNELS.find(c => c.name === 'DAILY');
-  res.json({ messages: messageCache[ch.chatId] || [] });
+  const messages = filterClosedSignals(ch, messageCache[ch.chatId] || []);
+  res.json({ messages });
 });
 app.get('/fvg', (req, res) => {
   const ch = CHANNELS.find(c => c.name === 'FVG');
-  res.json({ messages: messageCache[ch.chatId] || [] });
+  const messages = filterClosedSignals(ch, messageCache[ch.chatId] || []);
+  res.json({ messages });
 });
 app.get('/crt', (req, res) => {
   const ch = CHANNELS.find(c => c.name === 'CRT');
-  res.json({ messages: messageCache[ch.chatId] || [] });
+  const messages = filterClosedSignals(ch, messageCache[ch.chatId] || []);
+  res.json({ messages });
 });
 
 app.get('/reset', (req, res) => {
