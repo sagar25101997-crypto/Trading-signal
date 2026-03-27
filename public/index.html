@@ -348,6 +348,40 @@ body{background:var(--bg);color:var(--text);font-family:var(--ui);display:flex;f
         <span class="info-value" id="closedTradesCount">0</span>
       </div>
     </div>
+    
+    <!-- ========== ADMIN SECTION (SIRF ADMIN DEVICE PE DIKHEGA) ========== -->
+    <div class="settings-section" id="adminSection">
+      <div class="settings-title" style="color:var(--gold);">🔐 ADMIN TOOLS</div>
+      
+      <!-- Enable/Disable buttons - sabhi ko dikhega -->
+      <div class="setting-row" style="cursor:pointer;" onclick="enableAdminMode()">
+        <div>
+          <div class="setting-label">🔓 Enable Admin Mode</div>
+          <div class="setting-sub">Click ONCE on YOUR device to become admin</div>
+        </div>
+        <div style="font-family:var(--mono);font-size:12px;color:var(--gold);">🔑</div>
+      </div>
+      
+      <div class="setting-row" style="cursor:pointer;" onclick="disableAdminMode()">
+        <div>
+          <div class="setting-label">🔒 Disable Admin Mode</div>
+          <div class="setting-sub">Turn off admin access on this device</div>
+        </div>
+        <div style="font-family:var(--mono);font-size:12px;color:var(--red);">🔒</div>
+      </div>
+      
+      <!-- Admin Reset Button - SIRF ADMIN DEVICE PE DIKHEGA (initially hidden) -->
+      <div id="adminResetButton" style="display: none; margin-top: 12px;">
+        <div class="danger-btn" style="background:rgba(212,168,83,0.2); border-color:var(--gold); text-align:center; padding:14px; font-weight:bold;" onclick="adminResetAllUsers()">
+          🔥 ADMIN: RESET ALL USERS SIGNALS 🔥
+        </div>
+        <div style="font-family:var(--mono);font-size:8px;color:var(--text3); text-align:center; margin-top:8px;">
+          ⚠️ This will delete ALL signals for EVERY user | Cannot be undone
+        </div>
+      </div>
+    </div>
+    <!-- ========== END ADMIN SECTION ========== -->
+    
     <div class="settings-section">
       <div class="settings-title">ℹ️ ABOUT</div>
       <div class="info-row">
@@ -407,12 +441,9 @@ const LS_FV_KEY        = 'ts_fv_symbols';
 const LS_SETTINGS_KEY  = 'ts_settings';
 const LS_SIGNALS_KEY   = 'ts_all_signals_v2';
 const LS_HISTORY_KEY   = 'ts_closed_history_v2';
-// ── FIX: New key for v2 seen msgs — forces fresh start, old channel-unaware keys discarded
 const LS_SEEN_MSG_KEY  = 'ts_seen_msgs_v2';
 
 // ========== SEEN MESSAGES ==========
-// ── FIX: msgKey now includes chIdx so same text on different channels = different key
-// e.g. FVG channel idx=1, CRT channel idx=2 — never collide even if text+ts identical
 let seenMsgKeys = new Set();
 function loadSeenMsgs() {
   try {
@@ -426,7 +457,6 @@ function saveSeenMsgs() {
     localStorage.setItem(LS_SEEN_MSG_KEY, JSON.stringify(arr));
   } catch(e) {}
 }
-// ── FIX: chIdx added as prefix — prevents cross-channel key collision
 function msgKey(ts, text, chIdx) {
   return chIdx + '_' + ts + '_' + (text || '').substring(0, 60);
 }
@@ -579,6 +609,65 @@ function updateDataStats() {
   document.getElementById('openTradesCount').textContent   = open;
   document.getElementById('closedTradesCount').textContent = closed;
 }
+
+// ========== ADMIN DEVICE DETECTION SYSTEM ==========
+function isAdminDevice() {
+    try {
+        const adminFlag = localStorage.getItem('ts_is_admin');
+        return adminFlag === 'true';
+    } catch(e) {
+        return false;
+    }
+}
+
+function enableAdminMode() {
+    localStorage.setItem('ts_is_admin', 'true');
+    showToast("✅ Admin mode ENABLED on this device", "gold");
+    setTimeout(() => location.reload(), 800);
+}
+
+function disableAdminMode() {
+    localStorage.setItem('ts_is_admin', 'false');
+    showToast("🔒 Admin mode DISABLED on this device", "red");
+    setTimeout(() => location.reload(), 800);
+}
+
+function adminResetAllUsers() {
+    if (!isAdminDevice()) {
+        showToast("❌ ACCESS DENIED: Admin device only", "red");
+        return;
+    }
+    
+    if (!confirm("⚠️ ADMIN RESET - SABHI USERS KE SAARE SIGNALS DELETE HO JAYENGE!\n\nKya aap sure hain?")) {
+        return;
+    }
+    
+    localStorage.removeItem(LS_FV_KEY);
+    localStorage.removeItem(LS_SETTINGS_KEY);
+    localStorage.removeItem(LS_SIGNALS_KEY);
+    localStorage.removeItem(LS_HISTORY_KEY);
+    localStorage.removeItem(LS_SEEN_MSG_KEY);
+    
+    allSignals = [[], [], []];
+    closedHistory = [];
+    seenMsgKeys = new Set();
+    fvSymbols.clear();
+    
+    saveSignals();
+    saveHistory();
+    saveSeenMsgs();
+    saveFvSet();
+    
+    allSignals.forEach((sigs, i) => renderChannelPage(i, sigs, []));
+    renderLivePage();
+    renderStarredPage();
+    renderHistory();
+    updateDataStats();
+    
+    showToast("✅ ADMIN RESET COMPLETE - All signals cleared", "gold");
+    setTimeout(() => location.reload(), 1000);
+}
+// ========== END ADMIN SECTION ==========
 
 // ── FV SYMBOL SET ─────────────────────────────────────────────────────────────
 function loadFvSet() {
@@ -1000,25 +1089,17 @@ async function fetchAll() {
 
         sortedMessages.forEach(msg => {
           const ts  = msg.timestamp || Math.floor(Date.now() / 1000);
-
-          // ── FIX: chIdx included in key — FVG(idx=1) and CRT(idx=2) never collide
-          // even if same pair+direction message arrives at same second
           const key = msgKey(ts, msg.text, idx);
           if (seenMsgKeys.has(key)) return;
           seenMsgKeys.add(key);
 
-          // ── Step 1: TP/SL detection ──────────────────────────────────────
           const tpslResult = parseTPSL(msg.text);
           if (tpslResult) {
             const hitPair = extractPairFromTPSL(msg.text);
-
-            // ── TP/SL only matches open signal in SAME channel (idx)
-            // FVG TP → closes FVG signal only. CRT TP → closes CRT signal only.
             const matchSignal = allSignals[idx].find(s =>
               !s.hitType && s.pair && hitPair &&
               s.pair.toUpperCase() === hitPair.toUpperCase()
             );
-
             if (matchSignal) {
               const closedSig = {
                 ...matchSignal,
@@ -1038,14 +1119,11 @@ async function fetchAll() {
             return;
           }
 
-          // ── Step 2: New signal detection ────────────────────────────────
           const parsed = parseSignal(msg.text);
           if (parsed && parsed.dir && parsed.pair) {
-            // ── Block duplicate only within SAME channel
             const existsInOpen = allSignals[idx].some(s =>
               s.pair === parsed.pair && s.dir === parsed.dir && !s.hitType
             );
-
             if (!existsInOpen) {
               allSignals[idx].push({
                 ...parsed,
@@ -1065,7 +1143,6 @@ async function fetchAll() {
           }
         });
 
-        // Deduplicate within channel — keep newest per pair+dir
         const seen = new Set();
         const unique = [];
         allSignals[idx]
@@ -1178,6 +1255,22 @@ setInterval(() => {
     if (ts) el.textContent = timeAgo(ts);
   });
 }, 30000);
+
+// ========== INIT: Check Admin Device on Page Load ==========
+(function checkAndShowAdminButton() {
+    if (isAdminDevice()) {
+        const adminBtn = document.getElementById('adminResetButton');
+        if (adminBtn) {
+            adminBtn.style.display = 'block';
+        }
+        console.log("🔐 Admin device detected - Reset button visible");
+    } else {
+        const adminBtn = document.getElementById('adminResetButton');
+        if (adminBtn) {
+            adminBtn.style.display = 'none';
+        }
+    }
+})();
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
 setTabOffset(0, true);
