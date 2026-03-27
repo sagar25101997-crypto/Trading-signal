@@ -352,7 +352,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--ui);display:flex;f
       <div class="settings-title">ℹ️ ABOUT</div>
       <div class="info-row">
         <span class="info-label">Version</span>
-        <span class="info-value">v3.5</span>
+        <span class="info-value">v3.6</span>
       </div>
       <div class="info-row">
         <span class="info-label">Data Source</span>
@@ -405,13 +405,14 @@ const TAB_LABELS = ['LIVE', 'DAILY', 'FVG', 'CRT', '⭐ FV'];
 const TAB_COUNT = 5;
 const LS_FV_KEY        = 'ts_fv_symbols';
 const LS_SETTINGS_KEY  = 'ts_settings';
-const LS_SIGNALS_KEY   = 'ts_all_signals_v2';   // v2 — fresh start
+const LS_SIGNALS_KEY   = 'ts_all_signals_v2';
 const LS_HISTORY_KEY   = 'ts_closed_history_v2';
-const LS_SEEN_MSG_KEY  = 'ts_seen_msgs';         // ← NEW: seen message timestamps
+// ── FIX: New key for v2 seen msgs — forces fresh start, old channel-unaware keys discarded
+const LS_SEEN_MSG_KEY  = 'ts_seen_msgs_v2';
 
-// ========== SEEN MESSAGES (prevent re-processing) ==========
-// We track every message timestamp+text combo we've already processed
-// so on next fetch we don't re-parse them as new signals or TP/SL
+// ========== SEEN MESSAGES ==========
+// ── FIX: msgKey now includes chIdx so same text on different channels = different key
+// e.g. FVG channel idx=1, CRT channel idx=2 — never collide even if text+ts identical
 let seenMsgKeys = new Set();
 function loadSeenMsgs() {
   try {
@@ -421,13 +422,13 @@ function loadSeenMsgs() {
 }
 function saveSeenMsgs() {
   try {
-    // Keep only last 2000 keys to avoid storage bloat
     const arr = [...seenMsgKeys].slice(-2000);
     localStorage.setItem(LS_SEEN_MSG_KEY, JSON.stringify(arr));
   } catch(e) {}
 }
-function msgKey(ts, text) {
-  return ts + '_' + (text || '').substring(0, 40);
+// ── FIX: chIdx added as prefix — prevents cross-channel key collision
+function msgKey(ts, text, chIdx) {
+  return chIdx + '_' + ts + '_' + (text || '').substring(0, 60);
 }
 
 // ========== HISTORY STORE ==========
@@ -442,7 +443,6 @@ function saveHistory() {
   try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(closedHistory)); } catch(e) {}
 }
 function addToHistory(signal) {
-  // Avoid duplicate history entries
   const alreadyIn = closedHistory.some(h => h.id === signal.id);
   if (alreadyIn) return;
   closedHistory.unshift({ ...signal, closedAt: Math.floor(Date.now() / 1000) });
@@ -571,7 +571,7 @@ function resetAllSettings() {
     showToast('Settings reset');
   }
 }
-function checkForUpdates() { showToast('Latest version v3.5', 'gold'); }
+function checkForUpdates() { showToast('Latest version v3.6', 'gold'); }
 function updateDataStats() {
   let total = 0, open = 0, closed = closedHistory.length;
   allSignals.forEach(sigs => { total += sigs.length; open += sigs.filter(s => !s.hitType).length; });
@@ -748,38 +748,20 @@ function renderBellPanel()  {
 }
 
 // ── PARSE ─────────────────────────────────────────────────────────────────────
-/*
-  FIX 1 — parseTPSL: handle all these real Telegram formats:
-    "TP HIT : XAUUSD\nProfit : +$42.06"
-    "TP HIT : XAUUSD"
-    "SL HIT : XAUUSD\nLoss : -$20.00"
-    "🎯 TP REACHED"
-    "❌ SL HIT"
-*/
 function parseTPSL(text) {
   if (!text) return null;
   const t = text.toUpperCase();
   let type = null;
-
-  // TP patterns — including "TP HIT : XAUUSD" format
   if (/TP\s*HIT|TP\s*REACHED|TP\s*DONE|TARGET\s*(HIT|REACHED)|🎯/.test(t)) type = 'tp';
-  // SL patterns
   else if (/SL\s*HIT|SL\s*REACHED|SL\s*TRIGGERED|STOP\s*LOSS\s*(HIT|TRIGGERED)|STOPPED\s*OUT|❌/.test(t)) type = 'sl';
-
   if (!type) return null;
-
   let pnl = null;
-  // "Profit : +$42.06" or "Profit : 42.06"
   const profitMatch = text.match(/Profit\s*[:\-·]\s*[+]?\$?\s*([0-9]+(?:\.[0-9]+)?)/i);
   if (profitMatch) pnl = Math.abs(parseFloat(profitMatch[1]));
-
-  // "Loss : -$20.00" or "Loss : 20.00"
   const lossMatch = text.match(/Loss\s*[:\-·]\s*[-]?\$?\s*([0-9]+(?:\.[0-9]+)?)/i);
   if (lossMatch) {
     pnl = type === 'sl' ? -Math.abs(parseFloat(lossMatch[1])) : Math.abs(parseFloat(lossMatch[1]));
   }
-
-  // Fallback: any dollar amount
   if (pnl === null) {
     const dollarMatch = text.match(/[+\-]?\$?\s*([0-9]+(?:\.[0-9]+)?)/);
     if (dollarMatch) {
@@ -787,26 +769,16 @@ function parseTPSL(text) {
       if (type === 'sl') pnl = -Math.abs(pnl);
     }
   }
-
   return { type, pnl };
 }
 
-/*
-  FIX 2 — extractPairFromTPSL: handle "TP HIT : XAUUSD" format
-*/
 function extractPairFromTPSL(text) {
   if (!text) return null;
   const t = text.toUpperCase();
-
-  // "TP HIT : XAUUSD" or "SL HIT : XAUUSD"
   let m = t.match(/(?:TP|SL)\s*HIT\s*[:\-·]\s*([A-Z]{3,8})/);
   if (m) return m[1].replace(/[\/\.]/g, '');
-
-  // "TP HIT XAUUSD" (no colon)
   m = t.match(/(?:TP|SL)\s*(?:HIT|REACHED|TRIGGERED)\s+([A-Z]{3,8})/);
   if (m) return m[1].replace(/[\/\.]/g, '');
-
-  // Any 6-char forex pair or XXX/XXX
   m = t.match(/\b([A-Z]{3}[\/\.]?[A-Z]{3})\b/) || t.match(/\b([A-Z]{6})\b/);
   return m ? m[1].replace(/[\/\.]/g, '') : null;
 }
@@ -817,16 +789,13 @@ function parseSignal(text) {
   let dir = null;
   if      (/\bBUY\b/.test(t))  dir = 'buy';
   else if (/\bSELL\b/.test(t)) dir = 'sell';
-
   const pm = text.match(/\b([A-Z]{3}[\/\.]?[A-Z]{3})\b/i) || text.match(/\b([A-Z]{6})\b/);
   const pair  = pm  ? pm[1].toUpperCase().replace(/[\/\.]/g, '') : null;
   const em = text.match(/(?:ENTRY|PRICE|@)\s*[:\-]?\s*([0-9]+\.?[0-9]*)/i);
   const sm = text.match(/(?:SL|STOP[- ]?LOSS)\s*[:\-]?\s*([0-9]+\.?[0-9]*)/i);
   const tm = text.match(/(?:TP\s*[12]?|TAKE[- ]?PROFIT\s*[12]?)\s*[:\-]?\s*([0-9]+\.?[0-9]*)/i);
   const entry = em ? em[1] : null, sl = sm ? sm[1] : null, tp = tm ? tm[1] : null;
-
   if (!dir && !pair) return null;
-
   let rr = null;
   if (entry && sl && tp && showRR) {
     const e = parseFloat(entry), sv = parseFloat(sl), t2 = parseFloat(tp);
@@ -859,7 +828,6 @@ function renderCard(s, showCh, histMode, showFvBtn = true) {
   const fvBtnHtml = showFvBtn && s.pair
     ? `<button class="fv-btn${isFvSym?' active':''}" onclick="toggleFvSymbol('${s.pair}',event)">${isFvSym?'⭐':'☆'}</button>`
     : '';
-
   let statusBadge = '', hitBanner = '', hitCls = '';
   if (s.hitType === 'tp') {
     const amtStr   = s.pnl != null ? ` +$${Math.abs(s.pnl).toFixed(2)}` : '';
@@ -876,10 +844,8 @@ function renderCard(s, showCh, histMode, showFvBtn = true) {
   } else if (histMode) {
     statusBadge    = '<span class="hit-badge open">OPEN</span>';
   }
-
   const fvCls     = isFvSym ? 'fv-sym' : '';
   const rrDisplay = (s.rr && showRR) ? s.rr : '—';
-
   return `<div class="sig-card ${s.dir||''} ${hitCls} ${fvCls}" id="${id}" onclick="toggleCard('${id}')">
   ${hitBanner}
   <div class="card-collapsed">
@@ -1017,7 +983,7 @@ function renderHistory() {
     : `<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">NO HISTORY</div></div>`;
 }
 
-// ── FETCH (ALL 3 BUGS FIXED) ──────────────────────────────────────────────────
+// ── FETCH ─────────────────────────────────────────────────────────────────────
 async function fetchAll() {
   const dot = document.getElementById('liveDot'), txt = document.getElementById('liveText');
   dot.style.background = 'var(--gold)'; txt.textContent = 'SYNC';
@@ -1034,14 +1000,11 @@ async function fetchAll() {
 
         sortedMessages.forEach(msg => {
           const ts  = msg.timestamp || Math.floor(Date.now() / 1000);
-          const key = msgKey(ts, msg.text);
 
-          // ── FIX 3: Skip already-processed messages ──────────────────────
-          // This is the main reason signals disappear:
-          // Every fetch re-processes ALL messages from the channel cache.
-          // Without this check, old signals get re-matched and removed again.
+          // ── FIX: chIdx included in key — FVG(idx=1) and CRT(idx=2) never collide
+          // even if same pair+direction message arrives at same second
+          const key = msgKey(ts, msg.text, idx);
           if (seenMsgKeys.has(key)) return;
-          // Mark as seen FIRST before processing
           seenMsgKeys.add(key);
 
           // ── Step 1: TP/SL detection ──────────────────────────────────────
@@ -1049,14 +1012,14 @@ async function fetchAll() {
           if (tpslResult) {
             const hitPair = extractPairFromTPSL(msg.text);
 
-            // Find the open signal for this pair in this channel
+            // ── TP/SL only matches open signal in SAME channel (idx)
+            // FVG TP → closes FVG signal only. CRT TP → closes CRT signal only.
             const matchSignal = allSignals[idx].find(s =>
               !s.hitType && s.pair && hitPair &&
               s.pair.toUpperCase() === hitPair.toUpperCase()
             );
 
             if (matchSignal) {
-              // Clone signal with hit info for history
               const closedSig = {
                 ...matchSignal,
                 hitType : tpslResult.type,
@@ -1065,25 +1028,20 @@ async function fetchAll() {
                 ch      : CH_LABELS[idx]
               };
               addToHistory(closedSig);
-
-              // ── FIX: Remove from open signals ──
               allSignals[idx] = allSignals[idx].filter(s => s.id !== matchSignal.id);
-
               addBellAlert(
                 tpslResult.type, msg.text,
                 matchSignal.pair, ts,
                 tpslResult.pnl, matchSignal.dir, matchSignal.entry
               );
             }
-            // Even if no match found, TP/SL message is NOT shown in raws
             return;
           }
 
           // ── Step 2: New signal detection ────────────────────────────────
           const parsed = parseSignal(msg.text);
           if (parsed && parsed.dir && parsed.pair) {
-            // FIX: Only block if ALREADY OPEN for same pair+dir
-            // ❌ OLD (wrong): also checked history — this caused "disappear" bug
+            // ── Block duplicate only within SAME channel
             const existsInOpen = allSignals[idx].some(s =>
               s.pair === parsed.pair && s.dir === parsed.dir && !s.hitType
             );
@@ -1107,7 +1065,7 @@ async function fetchAll() {
           }
         });
 
-        // Remove duplicates (pair+dir), keep newest
+        // Deduplicate within channel — keep newest per pair+dir
         const seen = new Set();
         const unique = [];
         allSignals[idx]
@@ -1130,7 +1088,6 @@ async function fetchAll() {
     saveSeenMsgs();
     renderLivePage(); renderStarredPage(); renderHistory(); updateDataStats();
 
-    // Clear isNew flag after 5s
     setTimeout(() => {
       allSignals.forEach((sigs, i) => { sigs.forEach(s => { s.isNew = false; }); renderChannelPage(i, sigs, []); });
       renderLivePage();
